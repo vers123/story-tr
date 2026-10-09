@@ -2,52 +2,48 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本：v0.1.0**
+**版本 `v0.1.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
-> **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。
-> 克隆后请先按「[数据来源](#数据来源) → 获取方式」运行 `sync_from_site.py` 生成本地数据。
+> **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
 > **模板角色：`10000021`（安柏 / Amber）** —— 该角色的 `profile`（`meta.json`、`text.json`、全部故事 `en.md` + `zh.md`）与 `result/` 下的翻译结果均已完整填写，作为**其它角色的填写模板**与各工具产出的样例。
 >
-> 本项目以 **MIT** 许可发布，见 [LICENSE](LICENSE)（Copyright © 2026 vers123）。
+> **来源与版权**：角色与文本取自 Project Amber 的公开 API，**仅供学习/研究用途**；版权归米哈游 / Project Amber 所有。
 
-## 目录结构
+## 目录
 
+- [快速开始](#快速开始)
+- [数据来源](#数据来源)
+- [目录结构](#目录结构)
+- [数据约定](#数据约定)
+- [数据文件说明](#数据文件说明)
+- [工具脚本](#工具脚本)
+- [依赖与许可](#依赖与许可)
+- [版本与变更](#版本与变更)
+
+## 快速开始
+
+```bash
+# 1) 克隆
+git clone https://github.com/vers123/story-tr.git
+cd story-tr
+
+# 2) 建虚拟环境并安装依赖
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+
+# 3) 获取数据（生成 data/，详见「数据来源 → 获取方式」）
+.venv\Scripts\python scripts\sync_from_site.py
+
+# 4) 翻译（例：模板角色 10000021 的全部故事）
+.venv\Scripts\python scripts\translate_stories.py 10000021 --all
+
+# 5) 可选：配置翻译后端密钥与代理
+copy .env.example .env
 ```
-.
-├── data/                               # ★ 不入库：由 sync_from_site.py 生成（见「数据来源」）
-│   ├── character.json                  # 角色索引（id/名称 + path/stories）
-│   ├── _fetch_all.json                 # 原始抓取缓存（断点续抓用）
-│   └── story/character/{id}/
-│       ├── profile/
-│       │   ├── meta.json                 # 语言无关属性（rank/element/birthday/…）
-│       │   ├── text.json                 # 角色文本（称号/简介/命之座/所属/cv/服装/名片/料理）
-│       │   └── story/
-│       │       ├── character_details/{en,zh}.md
-│       │       ├── character_story_1/{en,zh}.md
-│       │       ├── character_story_2/{en,zh}.md
-│       │       ├── character_story_3/{en,zh}.md
-│       │       ├── character_story_4/{en,zh}.md
-│       │       ├── character_story_5/{en,zh}.md
-│       │       ├── {name_1}/{en,zh}.md      # 角色专属剧情（文件夹名为标题 slug）
-│       │       └── {name_2}/{en,zh}.md      # 神之眼 / 邪眼 等
-│       └── result/{story}/               # 由 translate_stories.py 生成
-│           ├── full.json / full.mp3      # 全文（源文/语言/逐步/最终译文 + 语音）
-│           ├── seg_01.json / seg_01.mp3  # 各段同结构
-│           └── segments.json             # 汇总
-├── scripts/                            # 工具脚本（见「工具脚本」）
-│   ├── sync_from_site.py               # 从 Project Amber 拉取并生成/校正全部角色数据
-│   ├── sync_story_folders.py           # 按 character.json 同步重命名故事文件夹
-│   ├── translate_chain.py              # 多后端「来回翻译 N 次」链路工具
-│   └── translate_stories.py            # 对故事跑链路并把结果落入 result/
-├── logs/                               # 运行日志（不入库）
-├── out/                                # translate_chain 的结果 json/mp3（不入库）
-├── .venv/                              # 虚拟环境（不入库）
-├── .env                                # 密钥配置（不入库，见 .env.example）
-├── requirements.txt
-├── LICENSE                             # MIT
-└── README.md
-```
+
+- 只要**数据** → 做到第 3 步即可（产出 `data/`）。
+- 只要**翻译结果** → 需要先有 `data/`，再执行第 4 步。
 
 ## 数据来源
 
@@ -95,7 +91,7 @@
 
 #### 方式二：Python 脚本（推荐，批量）
 
-用 `scripts/sync_from_site.py` 直接请求接口，**批量拉取全部角色**并生成/校正仓库文件（见「工具脚本」）。
+用 `scripts/sync_from_site.py` 直接请求接口，**批量拉取全部角色**并生成/校正仓库文件（见「[工具脚本](#工具脚本)」）。
 
 ```bash
 # 增量抓取：只补缺失项（默认）
@@ -127,6 +123,44 @@
 ### `quotes` 结构
 
 `data.quotes` 为对象，值为 `{ title, audio, text, tips, tasks }`（角色语音）。
+
+## 目录结构
+
+```
+.
+├── data/                               # ★ 不入库：由 sync_from_site.py 生成（见「数据来源」）
+│   ├── character.json                  # 角色索引（id/名称 + path/stories）
+│   ├── _fetch_all.json                 # 原始抓取缓存（断点续抓用）
+│   └── story/character/{id}/
+│       ├── profile/
+│       │   ├── meta.json                 # 语言无关属性（rank/element/birthday/…）
+│       │   ├── text.json                 # 角色文本（称号/简介/命之座/所属/cv/服装/名片/料理）
+│       │   └── story/
+│       │       ├── character_details/{en,zh}.md
+│       │       ├── character_story_1/{en,zh}.md
+│       │       ├── character_story_2/{en,zh}.md
+│       │       ├── character_story_3/{en,zh}.md
+│       │       ├── character_story_4/{en,zh}.md
+│       │       ├── character_story_5/{en,zh}.md
+│       │       ├── {name_1}/{en,zh}.md      # 角色专属剧情（文件夹名为标题 slug）
+│       │       └── {name_2}/{en,zh}.md      # 神之眼 / 邪眼 等
+│       └── result/{story}/               # 由 translate_stories.py 生成
+│           ├── full.json / full.mp3      # 全文（源文/语言/逐步/最终译文 + 语音）
+│           ├── seg_01.json / seg_01.mp3  # 各段同结构
+│           └── segments.json             # 汇总
+├── scripts/                            # 工具脚本（见「工具脚本」）
+│   ├── sync_from_site.py               # 从 Project Amber 拉取并生成/校正全部角色数据
+│   ├── sync_story_folders.py           # 按 character.json 同步重命名故事文件夹
+│   ├── translate_chain.py              # 多后端「来回翻译 N 次」链路工具
+│   └── translate_stories.py            # 对故事跑链路并把结果落入 result/
+├── logs/                               # 运行日志（不入库）
+├── out/                                # translate_chain 的结果 json/mp3（不入库）
+├── .venv/                              # 虚拟环境（不入库）
+├── .env                                # 密钥配置（不入库，见 .env.example）
+├── requirements.txt
+├── LICENSE                             # MIT
+└── README.md
+```
 
 ## 数据约定
 
@@ -203,18 +237,13 @@ title: "角色详细"
 
 ## 工具脚本
 
-依赖 Python 3，先建虚拟环境并安装依赖：
+环境准备见「[快速开始](#快速开始)」（`python -m venv .venv` + `pip install -r requirements.txt`）。
 
-```bash
-python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
-```
-
-各脚本的**长任务统一用 `tqdm` 显示进度条**（`tqdm` 已列入 `requirements.txt`）。
+各脚本的**长任务统一用 `tqdm` 显示进度条**。
 
 ### `scripts/sync_from_site.py`
 
-从 Project Amber（yatta.moe）拉取**全部角色**的 en / chs 数据（`avatar` + `avatarFetter`），生成/校正各角色的 `meta.json`、`text.json`、全部故事 `en.md`/`zh.md`，并重写 `data/character.json`（即上文「获取方式 · 方式二」）。
+从 Project Amber（yatta.moe）拉取**全部角色**的 en / chs 数据（`avatar` + `avatarFetter`），生成/校正各角色的 `meta.json`、`text.json`、全部故事 `en.md`/`zh.md`，并重写 `data/character.json`（即「[数据来源](#数据来源) · 获取方式 · 方式二」）。
 
 ```bash
 # 增量：只抓缺失项（默认，走缓存 data/_fetch_all.json）
@@ -234,7 +263,7 @@ python -m venv .venv
 - 抓取结果缓存到 `data/_fetch_all.json`，可**重复运行**（只补缺失项，支持断点续抓）
 - 想从零重抓，也可直接**删除 `data/_fetch_all.json`** 后运行（效果等同 `--refresh`）
 - 进度：`抓取`（本次待抓角色数）与 `生成`（写入文件的角色数）两条 `tqdm` 进度条，均为按角色
-- 按「数据约定」生成 slug、段落、`cv` 等
+- 按「[数据约定](#数据约定)」生成 slug、段落、`cv` 等
 - 运行结尾打印**校验信息**：`slug` 与 `character.json` 的 `stories` 是否一致、无故事角色、名字差异等
 
 ### `scripts/sync_story_folders.py`
@@ -265,7 +294,7 @@ python -m venv .venv
 # 自定义语言序列（不限 20 个）
 .venv\Scripts\python scripts\translate_chain.py "你好" --mode custom --languages ja,ko,ar
 
-# 指定后端（默认 google；连接失败自动切 bing）
+# 指定后端（默认 google → bing → baidu 自动回退）
 .venv\Scripts\python scripts\translate_chain.py --provider baidu
 ```
 
@@ -286,14 +315,14 @@ python -m venv .venv
 
 行为说明：
 
-- 流程：`langdetect` 判语言 → 非英文先译成英文（不计入 N）→ 按路线翻译 N 次 → 译回中文
+- 流程：`langdetect` 判语言（固定 seed，可复现）→ 非英文先译成英文（不计入 N）→ 按路线翻译 N 次 → 译回中文
 - 后端与密钥（写进 `.env`，见 `.env.example`）：三个后端都是「**优先官方 API，无 key 回退免费通道**」
   - `google`：配 `GOOGLE_API_KEY` → 走 Cloud Translation v2（稳定、有配额、支持长文本）；未配则走 `clients5.google.com` 的 `dict-chrome-ex` 免 key 端点，失败再回退 deep-translator 的 `GoogleTranslator`
   - `bing`：配 `BING_API_KEY`（+ `BING_REGION`）→ 走 Azure 官方接口；未配则走 Bing 网页免 key 通道（`cn.bing.com` / `www.bing.com` 多域名轮换，可用 `BING_WEB_BASE` 指定）
   - `baidu`：配 `BAIDU_APPID` + `BAIDU_APPKEY` → 走官方翻译开放平台
 - 后端选择：默认 `google → bing → baidu` 依次回退（`--provider` 可固定单个）
-- 错误处理：**被限流**（429 / `TooManyRequests`）→ **退避等待后重试同一后端**（5s 起、指数增长、上限 120s，共 10 次），不会因为备用后端不可用而整轮中止；**连接类**错误（超时/DNS/SSL/拒连）→ 立即切换后端（`google → bing → baidu`，都不行则出报告）；**业务类**错误（内容/参数/空结果等）→ 重试 5 次后暂停并出报告
-- **稳定性优先**：每个后端都按最小间隔节流 —— 实际间隔取 `max(--min-interval, 该后端下限)`；百度官方标准版 **QPS=1**，固定下限 `1.1s`（且 QPS 超限错误同样走退避重试），Google/Bing 下限 `0`（由全局 `--min-interval` 控制，默认 `0.3s`）。宁可慢也不中断
+- 错误处理（`tenacity`）：**被限流**（429 / `TooManyRequests` / 百度 `Invalid Access Limit`/`54003`）→ **退避等待后重试同一后端**（5s 起、指数增长、上限 120s，共 10 次），不会因为备用后端不可用而整轮中止；**连接类**错误（超时/DNS/SSL/拒连）→ 立即切换后端（`google → bing → baidu`，都不行则出报告）；**业务类**错误（内容/参数/空结果等）→ 重试 5 次后暂停并出报告
+- **稳定性优先**：每个后端都按最小间隔节流 —— 实际间隔取 `max(--min-interval, 该后端下限)`；百度官方标准版 **QPS=1**，固定下限 `1.1s`，Google/Bing 下限 `0`（由全局 `--min-interval` 控制，默认 `0.3s`）。宁可慢也不中断
 - 配额提示：Google 免费端点约 **5 请求/秒、20 万请求/天**；若触发的是**日配额**，需次日再跑（进度可续跑）
 - 语音：用 **gTTS**（MIT，Google 翻译 TTS 的封装）把**最终中文译文**读成 `out/<时间戳>.mp3`；长文本由 gTTS 自动分词分请求；`--no-tts` 可关闭。仅完整跑完（有最终译文）时才生成
 - 续跑：进度存根目录 `.translate_state.json`；重跑（参数一致）自动从断点继续，参数不一致需 `--reset`
@@ -372,3 +401,29 @@ python -m venv .venv
 > 说明：`beautifulsoup4` 为 `deep-translator` 的**传递依赖**（MIT），由 pip 自动安装，无需单独声明。
 
 > 选型原则：优先 **MIT / BSD / Apache-2.0** 等宽松许可。**未采用 GPL / LGPL 的库**（例如 `edge-tts` 为 GPLv3 / LGPLv3，与 MIT 项目不兼容），以免引入传染性义务。
+
+## 版本与变更
+
+本项目遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)，版本号形如 `MAJOR.MINOR.PATCH`：
+
+| 位 | 何时递增 | 对本项目而言 |
+| --- | --- | --- |
+| `MAJOR` | 不兼容的变化 | 破坏性调整：数据目录结构、`character.json` / `*.json` 字段、CLI 参数语义 |
+| `MINOR` | 向后兼容地新增功能 | 新增脚本、CLI 参数、翻译后端、输出文件 |
+| `PATCH` | 向后兼容的缺陷修复 | 修 bug、调参、性能与稳定性改进 |
+
+- **`0.y.z` 为初始开发阶段**：公共 API（数据目录结构、`*.json` 字段、CLI 行为）**可能随时变化**，暂不保证稳定；达到 `1.0.0` 后再严格执行兼容性。
+- 预发布用 `-` 后缀（如 `0.2.0-beta.1`），构建元数据用 `+`（如 `0.1.0+build.5`）。
+- 发布即打标签：`git tag -a vX.Y.Z -m "..."`（`v` 仅为标签约定，版本号本身遵循 SemVer）。
+
+### 变更记录
+
+#### 0.1.0（2026-10-09）
+
+首个版本。
+
+- **数据**：`sync_from_site.py` 抓取/校正全部角色（Project Amber 公开 API），生成 `profile/meta.json`、`profile/text.json`、故事 `en.md`+`zh.md`、`data/character.json`
+- **数据**：`sync_story_folders.py` 按 `character.json` 幂等同步故事文件夹名
+- **翻译**：`translate_chain.py` 多后端（Google / Bing / Baidu）「来回翻译 N 次」链路，含限流退避、请求节流、断点续跑、可复现语言判定
+- **翻译**：`translate_stories.py` 批量跑故事链路，输出分段 + 全文 + 语音（gTTS）
+- **工程**：`data/` 不入库（可由脚本重建）、MIT [LICENSE](LICENSE)、依赖清单、README
