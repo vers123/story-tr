@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.4.2`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.5.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -302,6 +302,7 @@ title: "角色详细"
 | `story-tr folders` | 按 `character.json` 的 `stories` 同步重命名故事文件夹 |
 | `story-tr chain [text]` | 单文本「来回翻译 N 次」链路（最后译回中文） |
 | `story-tr translate <id/范围>` | 批量翻译角色故事，结果落入 `{id}/result/` |
+| `story-tr clean <id/范围>` | 清理 `{id}/result/` 下的翻译产物（保留 `result/` 目录本身） |
 
 ### `story-tr fetch`
 
@@ -472,6 +473,41 @@ story-tr translate 10000021 --overwrite --no-tts
 - 续跑：`.translate_stories_state.json`（批量级进度，参数一致才续；键为 `id|story|key`）；已有结果默认跳过
 - `random` 模式下每份独立随机；进度用 `tqdm`（批量时「角色」总进度条 + 每个角色的「翻译链」进度条）
 
+### `story-tr clean`
+
+清理 `{id}/result/` 下的翻译产物（`full.*` / `seg_NN.*` / `segments.json` 等），用于重跑、换链或释放空间。
+
+```bash
+# 清理单个角色的 result/ 内容
+story-tr clean 10000021
+
+# 范围 / 全部角色
+story-tr clean 10000002-10000030
+story-tr clean --all-characters
+
+# 只清指定故事
+story-tr clean 10000021 --stories vision
+
+# 只预览，不删除
+story-tr clean --all-characters --dry-run
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `char_ids` | 角色 id / 范围（空格或逗号分隔）：`10000021` / `10000002-10000030` / `10000021,10000025-10000030` |
+| `--all-characters` | 处理 `character.json` 中的全部角色（与 `char_ids` 互斥） |
+| `--stories` | 只清理指定故事，逗号分隔（不指定 = 清理 `result/` 下的全部内容） |
+| `--dry-run` | 只预览将删除的内容（目录、文件数、占用大小），不实际删除 |
+| `-y` / `--yes` | 跳过交互确认 |
+| `--keep-state` | 保留 `.translate_stories_state.json` 记录（默认同步清理） |
+
+行为说明：
+
+- 只删 `result/` 里的内容，**保留 `{id}/result/` 目录本身**（维持目录结构约定）
+- 默认**交互确认**（先列出目录、文件数与占用大小）；`--dry-run` 预览、`-y` 跳过确认
+- **默认同步清理**状态记录：移除 `.translate_stories_state.json` 中对应的 `id|story|key` 条目 —— 否则重跑 `translate` 会把这些任务当成「已完成」而跳过；`--keep-state` 可保留
+- 角色选择语义与 `story-tr translate` 完全一致（含范围内不存在 id 的跳过提示）
+
 ## 依赖与许可
 
 本项目以 **MIT** 许可发布，见 [LICENSE](LICENSE)（Copyright © 2026 vers123）。
@@ -509,6 +545,13 @@ story-tr translate 10000021 --overwrite --no-tts
 - 发布即打标签：`git tag -a vX.Y.Z -m "..."`（`v` 仅为标签约定，版本号本身遵循 SemVer）。
 
 ### 变更记录
+
+#### 0.5.0（2026-10-09）
+
+- **新增**：`story-tr clean <id/范围>` —— 清理 `{id}/result/` 下的翻译产物（保留 `result/` 目录本身）
+  - 角色选择与 `translate` 一致（id / 范围 / `--all-characters`），`--stories` 可只清指定故事
+  - 默认交互确认（列出目录 / 文件数 / 占用）；`--dry-run` 预览、`-y/--yes` 跳过
+  - 默认**同步清理** `.translate_stories_state.json` 中对应 `id|story|key` 记录（`--keep-state` 保留），避免重跑被跳过
 
 #### 0.4.2（2026-10-09）
 
