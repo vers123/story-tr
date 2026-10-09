@@ -235,6 +235,26 @@ def signature(args, char_ids):
             "provider": args.provider}
 
 
+def prepare_state(state, sig, reset):
+    """校验/初始化批量状态，返回 (state, completed, error)。
+
+    - 已有签名且与本次不一致（且未 `--reset`）→ 返回错误，提示加 `--reset`
+    - 签名缺失（被 `clean` 重置）→ 采用新签名并**沿用已有 completed 记录**
+    - `--reset` → 清空 completed
+    """
+    prev = (state or {}).get("signature")
+    if state and not reset and prev and prev != sig:
+        return None, None, ("参数与上次批量任务不一致，请加 --reset 后重跑。\n"
+                            "  上次：%s\n  本次：%s"
+                            % (json.dumps(prev, ensure_ascii=False),
+                               json.dumps(sig, ensure_ascii=False)))
+    completed = set() if reset else set((state or {}).get("completed", []))
+    new_state = {"signature": sig, "completed": sorted(completed),
+                 "started_at": (state or {}).get("started_at")
+                 or datetime.now().isoformat(timespec="seconds")}
+    return new_state, completed, None
+
+
 def build_tasks(base, char_id, stories, log):
     tasks = []
     for story in stories:
@@ -278,16 +298,10 @@ def main(args) -> int:
         return 1
 
     sig = signature(args, char_ids)
-    state = load_state()
-    if state and not args.reset and state.get("signature") != sig:
-        print("参数与上次批量任务不一致，请加 --reset 后重跑。")
-        print("  上次：%s" % json.dumps(state.get("signature"), ensure_ascii=False))
-        print("  本次：%s" % json.dumps(sig, ensure_ascii=False))
+    state, completed, err = prepare_state(load_state(), sig, args.reset)
+    if err:
+        print(err)
         return 3
-    if args.reset or not state or state.get("signature") != sig:
-        state = {"signature": sig, "completed": [],
-                 "started_at": datetime.now().isoformat(timespec="seconds")}
-    completed = set(state.get("completed", []))
 
     processed = 0
     outer = tqdm(char_ids, desc="角色", unit="个", position=0,

@@ -76,7 +76,11 @@ def state_key_match(key, ids, names):
 
 
 def clean_state(char_ids, names=None, dry_run=False):
-    """移除（或仅统计）状态文件中对应记录，返回命中条数。"""
+    """移除（或仅统计）状态文件中对应记录，返回命中条数。
+
+    同时**重置批次签名**：清理后「已完成集合」已不再对应原批次参数，
+    签名作废后下次 `translate` 可直接用新参数运行（否则会因签名不一致要求 --reset）。
+    """
     state = stories.load_state()
     if not state or not state.get("completed"):
         return 0
@@ -85,6 +89,7 @@ def clean_state(char_ids, names=None, dry_run=False):
     if hits and not dry_run:
         dropped = set(hits)
         state["completed"] = [k for k in state["completed"] if k not in dropped]
+        state.pop("signature", None)
         stories.save_state(state)
     return len(hits)
 
@@ -159,7 +164,7 @@ def main(args) -> int:
         label = ", ".join(os.path.basename(t) for t in ts)
         print("  %s/result/  [%s]  %d 个文件，%s" % (cid, label, n, human(size)))
     print("合计：%d 个角色，%d 个文件，%s" % (len(plan), total_n, human(total_size)))
-    print("状态记录：%s（%d 条）" % ("保留（--keep-state）" if args.keep_state else "同步清理",
+    print("状态记录：%s（%d 条）" % ("保留（--keep-state）" if args.keep_state else "同步清理并重置批次签名",
                                   state_hits))
 
     if args.dry_run:
@@ -178,5 +183,6 @@ def main(args) -> int:
         remove(ts)
     print("已清理 %d 个角色的 result/ 内容（result/ 目录本身保留）。" % len(plan))
     if not args.keep_state:
-        print("状态记录：移除 %d 条。" % clean_state(char_ids, names))
+        print("状态记录：移除 %d 条，并重置批次签名（下次 translate 可直接运行）。"
+              % clean_state(char_ids, names))
     return 0

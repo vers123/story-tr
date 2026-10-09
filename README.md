@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.5.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.5.1`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -471,6 +471,7 @@ story-tr translate 10000021 --overwrite --no-tts
 - 输出：`result/{story}/full.json|mp3`、`seg_NN.json|mp3`、`segments.json`（汇总：段号/源文/语言/最终结果/文件名）
 - 每份 json = 链路结果（源文/检出语言/语言路线/逐步/最终译文）+ `story` / `segment_index` / `source_file`
 - 续跑：`.translate_stories_state.json`（批量级进度，参数一致才续；键为 `id|story|key`）；已有结果默认跳过
+  - 参数与上次不一致时会要求加 `--reset`；`story-tr clean` 会**重置批次签名**，之后可用新参数直接运行
 - `random` 模式下每份独立随机；进度用 `tqdm`（批量时「角色」总进度条 + 每个角色的「翻译链」进度条）
 
 ### `story-tr clean`
@@ -505,7 +506,7 @@ story-tr clean --all-characters --dry-run
 
 - 只删 `result/` 里的内容，**保留 `{id}/result/` 目录本身**（维持目录结构约定）
 - 默认**交互确认**（先列出目录、文件数与占用大小）；`--dry-run` 预览、`-y` 跳过确认
-- **默认同步清理**状态记录：移除 `.translate_stories_state.json` 中对应的 `id|story|key` 条目 —— 否则重跑 `translate` 会把这些任务当成「已完成」而跳过；`--keep-state` 可保留
+- **默认同步清理**状态记录：移除 `.translate_stories_state.json` 中对应的 `id|story|key` 条目，并**重置批次签名** —— 否则重跑 `translate` 会把这些任务当成「已完成」而跳过，或因签名不一致要求 `--reset`；`--keep-state` 可保留
 - 角色选择语义与 `story-tr translate` 完全一致（含范围内不存在 id 的跳过提示）
 
 ## 依赖与许可
@@ -545,6 +546,11 @@ story-tr clean --all-characters --dry-run
 - 发布即打标签：`git tag -a vX.Y.Z -m "..."`（`v` 仅为标签约定，版本号本身遵循 SemVer）。
 
 ### 变更记录
+
+#### 0.5.1（2026-10-09）
+
+- **修复**：`story-tr clean` 清理后未重置批次签名，导致紧接着 `translate` 报「参数与上次批量任务不一致」并要求 `--reset`
+  - `clean` 现在移除进度记录的同时**重置签名**；`translate` 遇到无签名状态时**沿用剩余记录**并采用新签名（不再要求 `--reset`）
 
 #### 0.5.0（2026-10-09）
 

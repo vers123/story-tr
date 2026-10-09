@@ -52,16 +52,19 @@ def test_human():
 def test_clean_state_filters(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     (tmp_path / "state.json").write_text(json.dumps({
-        "signature": {}, "completed": [
+        "signature": {"characters": ["10000021", "10000103"]}, "completed": [
             "10000021|amber_journal|full",
             "10000021|vision|seg_01",
             "10000103|amber_journal|full",
         ]}), encoding="utf-8")
 
     assert clean.clean_state(["10000021"], None, dry_run=True) == 2
+    data = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert "signature" in data  # dry-run 不改动
     assert clean.clean_state(["10000021"], ["vision"]) == 1
     data = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
     assert data["completed"] == ["10000021|amber_journal|full", "10000103|amber_journal|full"]
+    assert "signature" not in data  # 清理后重置批次签名，避免下次 translate 要求 --reset
 
 
 def test_clean_state_noop_without_state(tmp_path, monkeypatch):
