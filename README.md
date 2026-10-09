@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.3.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.3.1`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -24,30 +24,49 @@
 
 ## 安装
 
-三种方式任选其一：
+> **建议先建虚拟环境**，避免与系统 Python 的包相互污染。只想要命令的话，用 `pipx` 一步隔离装好。
+
+**方式一：仓库内开发（venv，推荐）**
 
 ```bash
-# 1) 从仓库直接安装
-pip install git+https://github.com/vers123/story-tr
-
-# 2) 本地克隆后安装（开发用可编辑模式）
 git clone https://github.com/vers123/story-tr.git
 cd story-tr
-pip install -e ".[dev]"      # 含开发/测试依赖；只运行用 pip install -e .
 
-# 3) 不安装，直接用仓库内的入口
-python main.py --help
+python -m venv .venv
+.venv\Scripts\activate                 # Windows；macOS/Linux: source .venv/bin/activate
+pip install -e ".[dev]"                # 只运行用 pip install -e .
+
+story-tr --version
+```
+
+**方式二：只要命令（pipx，自动隔离环境）**
+
+```bash
+pipx install git+https://github.com/vers123/story-tr
+story-tr --version
+```
+
+**方式三：不安装，直接用仓库内入口**
+
+```bash
+python main.py --help                  # 也可 python -m story_tr / python scripts/xxx.py
 ```
 
 安装后提供命令 **`story-tr`**；等价入口还有 `python -m story_tr` 与 `python main.py`。
+
+> **venv 下命令不在 PATH**：需先激活，或写全路径 `.venv\Scripts\story-tr.exe`（macOS/Linux 为 `.venv/bin/story-tr`）。
 
 > 工作目录（`data/`、`logs/`、`out/`、`.env`）默认按 `--data-dir` → `$STORY_TR_HOME` → 向上查找 `data/character.json` → 当前目录 的顺序确定。
 
 ## 快速开始
 
 ```bash
-# 1) 安装
-pip install git+https://github.com/vers123/story-tr
+# 1) 安装（见「安装」；此处为 venv 方式）
+git clone https://github.com/vers123/story-tr.git
+cd story-tr
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e .
 
 # 2) 获取数据（生成 data/，详见「数据来源 → 获取方式」）
 story-tr fetch
@@ -56,7 +75,7 @@ story-tr fetch
 story-tr translate 10000021
 
 # 4) 可选：配置翻译后端密钥与代理
-copy .env.example .env
+copy .env.example .env                 # macOS/Linux: cp .env.example .env
 ```
 
 - 只要**数据** → 做到第 2 步即可（产出 `data/`）。
@@ -474,6 +493,11 @@ story-tr translate 10000021 --overwrite --no-tts
 - 发布即打标签：`git tag -a vX.Y.Z -m "..."`（`v` 仅为标签约定，版本号本身遵循 SemVer）。
 
 ### 变更记录
+
+#### 0.3.1（2026-10-09）
+
+- **文档**：安装改为以 **venv** 为主、**pipx** 为「只要命令」的推荐方式，补上激活与「venv 下命令不在 PATH」的提示
+- 纯文档变更：无代码、数据格式或 CLI 行为变化（PATCH）
 
 #### 0.3.0（2026-10-09）
 
