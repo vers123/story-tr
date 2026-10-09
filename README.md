@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.2.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.3.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -12,38 +12,56 @@
 
 ## 目录
 
+- [安装](#安装)
 - [快速开始](#快速开始)
 - [数据来源](#数据来源)
 - [目录结构](#目录结构)
 - [数据约定](#数据约定)
 - [数据文件说明](#数据文件说明)
-- [工具脚本](#工具脚本)
+- [命令（CLI）](#命令cli)
 - [依赖与许可](#依赖与许可)
 - [版本与变更](#版本与变更)
+
+## 安装
+
+三种方式任选其一：
+
+```bash
+# 1) 从仓库直接安装
+pip install git+https://github.com/vers123/story-tr
+
+# 2) 本地克隆后安装（开发用可编辑模式）
+git clone https://github.com/vers123/story-tr.git
+cd story-tr
+pip install -e ".[dev]"      # 含开发/测试依赖；只运行用 pip install -e .
+
+# 3) 不安装，直接用仓库内的入口
+python main.py --help
+```
+
+安装后提供命令 **`story-tr`**；等价入口还有 `python -m story_tr` 与 `python main.py`。
+
+> 工作目录（`data/`、`logs/`、`out/`、`.env`）默认按 `--data-dir` → `$STORY_TR_HOME` → 向上查找 `data/character.json` → 当前目录 的顺序确定。
 
 ## 快速开始
 
 ```bash
-# 1) 克隆
-git clone https://github.com/vers123/story-tr.git
-cd story-tr
+# 1) 安装
+pip install git+https://github.com/vers123/story-tr
 
-# 2) 建虚拟环境并安装依赖
-python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
+# 2) 获取数据（生成 data/，详见「数据来源 → 获取方式」）
+story-tr fetch
 
-# 3) 获取数据（生成 data/，详见「数据来源 → 获取方式」）
-.venv\Scripts\python scripts\sync_from_site.py
+# 3) 翻译（例：模板角色 10000021 的全部含内容故事；也支持范围 10000002-10000030）
+story-tr translate 10000021
 
-# 4) 翻译（例：模板角色 10000021 的全部含内容故事；也支持范围 10000002-10000030）
-.venv\Scripts\python scripts\translate_stories.py 10000021
-
-# 5) 可选：配置翻译后端密钥与代理
+# 4) 可选：配置翻译后端密钥与代理
 copy .env.example .env
 ```
 
-- 只要**数据** → 做到第 3 步即可（产出 `data/`）。
-- 只要**翻译结果** → 需要先有 `data/`，再执行第 4 步。
+- 只要**数据** → 做到第 2 步即可（产出 `data/`）。
+- 只要**翻译结果** → 需要先有 `data/`，再执行第 3 步。
+- 未安装也能跑：把 `story-tr xxx` 换成 `python main.py xxx` 或 `python scripts/xxx.py`（兼容入口）。
 
 ## 数据来源
 
@@ -91,7 +109,7 @@ copy .env.example .env
 
 #### 方式二：Python 脚本（推荐，批量）
 
-用 `scripts/sync_from_site.py` 直接请求接口，**批量拉取全部角色**并生成/校正仓库文件（见「[工具脚本](#工具脚本)」）。
+用 `story-tr fetch` 直接请求接口，**批量拉取全部角色**并生成/校正仓库文件（见「[命令（CLI）](#命令cli)」）。
 
 ```bash
 # 增量抓取：只补缺失项（默认）
@@ -128,7 +146,7 @@ copy .env.example .env
 
 ```
 .
-├── data/                               # ★ 不入库：由 sync_from_site.py 生成（见「数据来源」）
+├── data/                               # ★ 不入库：由 `story-tr fetch` 生成（见「数据来源」）
 │   ├── character.json                  # 角色索引（id/名称 + path/stories）
 │   ├── _fetch_all.json                 # 原始抓取缓存（断点续抓用）
 │   └── story/character/{id}/
@@ -144,19 +162,32 @@ copy .env.example .env
 │       │       ├── character_story_5/{en,zh}.md
 │       │       ├── {name_1}/{en,zh}.md      # 角色专属剧情（文件夹名为标题 slug）
 │       │       └── {name_2}/{en,zh}.md      # 神之眼 / 邪眼 等
-│       └── result/{story}/               # 由 translate_stories.py 生成
+│       └── result/{story}/               # 由 `story-tr translate` 生成
 │           ├── full.json / full.mp3      # 全文（源文/语言/逐步/最终译文 + 语音）
 │           ├── seg_01.json / seg_01.mp3  # 各段同结构
 │           └── segments.json             # 汇总
-├── scripts/                            # 工具脚本（见「工具脚本」）
-│   ├── sync_from_site.py               # 从 Project Amber 拉取并生成/校正全部角色数据
-│   ├── sync_story_folders.py           # 按 character.json 同步重命名故事文件夹
-│   ├── translate_chain.py              # 多后端「来回翻译 N 次」链路工具
-│   └── translate_stories.py            # 对故事跑链路并把结果落入 result/
+├── src/story_tr/                       # 包源码（CLI 实现）
+│   ├── __init__.py                     # __version__
+│   ├── __main__.py                     # python -m story_tr
+│   ├── cli.py                          # 顶层 CLI（子命令注册）
+│   ├── paths.py                        # 工作目录解析
+│   ├── sync.py                         # story-tr fetch
+│   ├── folders.py                      # story-tr folders
+│   ├── chain.py                        # story-tr chain（翻译链核心）
+│   └── stories.py                      # story-tr translate（批量翻译）
+├── scripts/                            # 兼容入口（转发到包内实现）
+│   ├── sync_from_site.py               # = story-tr fetch
+│   ├── sync_story_folders.py           # = story-tr folders
+│   ├── translate_chain.py              # = story-tr chain
+│   └── translate_stories.py            # = story-tr translate
+├── tests/                              # pytest 单元测试
+├── .github/workflows/ci.yml            # CI：ruff + pytest（3.9 / 3.11 / 3.13）
 ├── logs/                               # 运行日志（不入库）
 ├── out/                                # translate_chain 的结果 json/mp3（不入库）
 ├── .venv/                              # 虚拟环境（不入库）
 ├── .env                                # 密钥配置（不入库，见 .env.example）
+├── pyproject.toml                      # 打包元数据 + 入口点 + ruff/pytest 配置
+├── main.py                             # 兼容入口：python main.py <子命令>
 ├── requirements.txt
 ├── LICENSE                             # MIT
 └── README.md
@@ -184,7 +215,7 @@ copy .env.example .env
 | `path` | 角色目录（相对项目根），如 `data/story/character/10000021` |
 | `stories` | `profile/story/` 下的故事文件夹名列表 |
 
-> `path` / `stories` 是**文件夹重命名**的依据：以 `character.json` 为准同步重命名对应文件夹（见 `sync_story_folders.py`）。
+> `path` / `stories` 是**文件夹重命名**的依据：以 `character.json` 为准同步重命名对应文件夹（见 `story-tr folders`）。
 
 ### `profile/meta.json`
 
@@ -235,22 +266,29 @@ title: "角色详细"
 初来乍到的旅客用不着三天，便能与这位热情似火的少女打成一片。
 ```
 
-## 工具脚本
+## 命令（CLI）
 
-环境准备见「[快速开始](#快速开始)」（`python -m venv .venv` + `pip install -r requirements.txt`）。
+安装见「[安装](#安装)」；未安装时把 `story-tr` 换成 `python main.py`（或用兼容 shim `python scripts/xxx.py`）。
 
-各脚本的**长任务统一用 `tqdm` 显示进度条**。
+所有命令的**长任务统一用 `tqdm` 显示进度条**；都可加全局参数 `--data-dir <目录>` 指定工作目录。
 
-### `scripts/sync_from_site.py`
+| 子命令 | 作用 |
+| --- | --- |
+| `story-tr fetch` | 从 Project Amber 拉取并生成/校正全部角色数据 |
+| `story-tr folders` | 按 `character.json` 的 `stories` 同步重命名故事文件夹 |
+| `story-tr chain [text]` | 单文本「来回翻译 N 次」链路（最后译回中文） |
+| `story-tr translate <id/范围>` | 批量翻译角色故事，结果落入 `{id}/result/` |
+
+### `story-tr fetch`
 
 从 Project Amber（yatta.moe）拉取**全部角色**的 en / chs 数据（`avatar` + `avatarFetter`），生成/校正各角色的 `meta.json`、`text.json`、全部故事 `en.md`/`zh.md`，并重写 `data/character.json`（即「[数据来源](#数据来源) · 获取方式 · 方式二」）。
 
 ```bash
 # 增量：只抓缺失项（默认，走缓存 data/_fetch_all.json）
-.venv\Scripts\python scripts\sync_from_site.py
+story-tr fetch
 
 # 重新抓取：忽略缓存，强制从网站重新拉取全部角色
-.venv\Scripts\python scripts\sync_from_site.py --refresh
+story-tr fetch --refresh
 ```
 
 | 参数 | 说明 |
@@ -266,12 +304,12 @@ title: "角色详细"
 - 按「[数据约定](#数据约定)」生成 slug、段落、`cv` 等
 - 运行结尾打印**校验信息**：`slug` 与 `character.json` 的 `stories` 是否一致、无故事角色、名字差异等
 
-### `scripts/sync_story_folders.py`
+### `story-tr folders`
 
 按 `data/character.json` 的 `stories` 同步重命名各角色 `profile/story/` 下的文件夹（幂等，可反复运行）。
 
 ```bash
-.venv\Scripts\python scripts\sync_story_folders.py
+story-tr folders
 ```
 
 行为说明：
@@ -280,22 +318,22 @@ title: "角色详细"
 - 重命名行经 `tqdm.write` 输出，不与进度条混排
 - 已一致的角色跳过（幂等）；`stories` 为空（站点无故事，如 `10000117` / `10000118`）的角色不告警
 
-### `scripts/translate_chain.py`
+### `story-tr chain`
 
 把一段文本按语言路线来回翻译 N 次，最后译回中文（"翻译接龙"）。
 
 ```bash
 # 默认：random 抽 20 个语言，默认文本 Hello, World
-.venv\Scripts\python scripts\translate_chain.py "Hello, World"
+story-tr chain "Hello, World"
 
 # 固定链（asia / europe / exotic，各 20 个语言）
-.venv\Scripts\python scripts\translate_chain.py --mode fixed --chain asia
+story-tr chain --mode fixed --chain asia
 
 # 自定义语言序列（不限 20 个）
-.venv\Scripts\python scripts\translate_chain.py "你好" --mode custom --languages ja,ko,ar
+story-tr chain "你好" --mode custom --languages ja,ko,ar
 
 # 指定后端（默认 google → bing → baidu 自动回退）
-.venv\Scripts\python scripts\translate_chain.py --provider baidu
+story-tr chain --provider baidu
 ```
 
 | 参数 | 说明 |
@@ -345,31 +383,31 @@ title: "角色详细"
 > 并发实测：同批 `--workers 4 --min-interval 0.25` ≈ **34s**（≈1.7×，总速率约 **4 请求/秒**）。
 > 全量估算（现有 `data/`：13,646 份结果 / 约 30 万次调用）：单线程 ≈ 45 h；`--workers 4 --min-interval 0.25` ≈ **21 h**。
 
-### `scripts/translate_stories.py`
+### `story-tr translate`
 
 对某角色的故事（`zh.md`）跑翻译链，结果写入 `{id}/result/{story}/`（分段 + 全文，含语音）。
 
 ```bash
 # 单个角色（默认处理其全部含内容故事）
-.venv\Scripts\python scripts\translate_stories.py 10000021
+story-tr translate 10000021
 
 # 只处理指定故事
-.venv\Scripts\python scripts\translate_stories.py 10000021 --stories amber_journal,vision
+story-tr translate 10000021 --stories amber_journal,vision
 
 # 按 id 范围（含两端；不在 character.json 中的 id 自动跳过并提示）
-.venv\Scripts\python scripts\translate_stories.py 10000002-10000030
+story-tr translate 10000002-10000030
 
 # 组合：多个 id / 多段范围
-.venv\Scripts\python scripts\translate_stories.py 10000021,10000025-10000030 --stories vision
+story-tr translate 10000021,10000025-10000030 --stories vision
 
 # 全部角色
-.venv\Scripts\python scripts\translate_stories.py --all-characters
+story-tr translate --all-characters
 
 # 并发提速（约 4 请求/秒；配合 --min-interval 控制速率）
-.venv\Scripts\python scripts\translate_stories.py --all-characters --workers 4 --min-interval 0.25
+story-tr translate --all-characters --workers 4 --min-interval 0.25
 
 # 覆盖已有结果、关闭语音
-.venv\Scripts\python scripts\translate_stories.py 10000021 --overwrite --no-tts
+story-tr translate 10000021 --overwrite --no-tts
 ```
 
 | 参数 | 说明 |
@@ -403,7 +441,7 @@ title: "角色详细"
 
 本项目以 **MIT** 许可发布，见 [LICENSE](LICENSE)（Copyright © 2026 vers123）。
 
-第三方依赖（见 `requirements.txt`）：
+第三方依赖（以 `pyproject.toml` 的 `dependencies` 为准；`requirements.txt` 为便捷镜像）：
 
 | 依赖 | 用途 | 许可 |
 | --- | --- | --- |
@@ -418,6 +456,8 @@ title: "角色详细"
 > 说明：`beautifulsoup4` 为 `deep-translator` 的**传递依赖**（MIT），由 pip 自动安装，无需单独声明。
 
 > 选型原则：优先 **MIT / BSD / Apache-2.0** 等宽松许可。**未采用 GPL / LGPL 的库**（例如 `edge-tts` 为 GPLv3 / LGPLv3，与 MIT 项目不兼容），以免引入传染性义务。
+
+> 开发与测试：`pip install -e ".[dev]"` → `ruff check .` + `pytest`（CI 见 `.github/workflows/ci.yml`）。
 
 ## 版本与变更
 
@@ -434,6 +474,14 @@ title: "角色详细"
 - 发布即打标签：`git tag -a vX.Y.Z -m "..."`（`v` 仅为标签约定，版本号本身遵循 SemVer）。
 
 ### 变更记录
+
+#### 0.3.0（2026-10-09）
+
+- **新增**：打包为**可安装 CLI**（`pyproject.toml` + `src/story_tr/`），提供 `story-tr fetch` / `folders` / `chain` / `translate` 四个子命令；等价入口 `python -m story_tr`、`python main.py`
+- **新增**：**工作目录可配置** —— `--data-dir` → `$STORY_TR_HOME` → 向上查找 `data/character.json` → 当前目录
+- **新增**：`tests/`（pytest）与 GitHub Actions CI（ruff + pytest，Python 3.9 / 3.11 / 3.13）
+- **变更**：原 `scripts/*.py` 改为**兼容 shim**（旧命令仍可用），实现移入 `story_tr` 包
+- **变更**：依赖以 `pyproject.toml` 为准，`requirements.txt` 保留为便捷镜像
 
 #### 0.2.0（2026-10-09）
 

@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "story-tr"
+dynamic = ["version"]
+description = "原神角色故事双语（中/英）文本抓取与「来回翻译 N 次」链路工具"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "vers123" }]
+keywords = ["genshin", "translation", "dataset", "cli"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Utilities",
+]
+dependencies = [
+  "requests",
+  "tqdm",
+  "deep-translator",
+  "langdetect",
+  "python-dotenv",
+  "gTTS",
+  "tenacity",
+]
+
+[project.optional-dependencies]
+dev = ["build", "twine", "ruff", "pytest"]
+
+[project.scripts]
+story-tr = "story_tr.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/vers123/story-tr"
+Source = "https://github.com/vers123/story-tr"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "story_tr.__version__" }
+
+[tool.ruff]
+line-length = 110
+target-version = "py39"
+extend-exclude = ["data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

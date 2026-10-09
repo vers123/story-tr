@@ -1,3 +1,5 @@
+# 依赖以 pyproject.toml 的 [project.dependencies] 为准；本文件为便捷镜像。
+# 开发/测试依赖见 pyproject.toml 的 [project.optional-dependencies].dev
 deep-translator
 langdetect
 python-dotenv
