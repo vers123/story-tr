@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.9.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.9.1`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -216,8 +216,9 @@ story-tr fetch --refresh
 │   └── translate_stories.py            # = story-tr translate
 ├── tests/                              # pytest 单元测试
 ├── .github/workflows/ci.yml            # CI：ruff + pytest（3.9 / 3.11 / 3.13）
-├── logs/                               # 运行日志（不入库）
+├── logs/                               # 运行日志 + MCP 子进程日志 logs/mcp_*.log（不入库）
 ├── out/                                # translate_chain 的结果 json/mp3（不入库）
+├── dist/ / build/                      # python -m build 的产物 *.whl / *.tar.gz（不入库）
 ├── .venv/                              # 虚拟环境（不入库）
 ├── .env                                # 密钥配置（不入库，见 .env.example）
 ├── pyproject.toml                      # 打包元数据 + 入口点 + ruff/pytest 配置
@@ -552,20 +553,79 @@ pip install -e ".[mcp]"          # 已装好的话：pip install "mcp>=2.0,<3"
 story-tr-mcp                     # 等价：python -m story_tr.mcp
 ```
 
-**客户端配置示例**（用 `STORY_TR_HOME` 指向仓库根目录）：
+### 客户端配置
+
+MCP 客户端的配置只是**声明怎么拉起 Server 进程**（不是装包）。`command` 建议写**绝对路径**；`env.STORY_TR_HOME` 指向含 `data/` 的目录。
+
+**方式 A：指向可执行文件（最简）**
 
 ```json
 {
   "mcpServers": {
     "story-tr": {
-      "command": "story-tr-mcp",
+      "command": "D:/path/to/story-tr/.venv/Scripts/story-tr-mcp.exe",
       "env": { "STORY_TR_HOME": "D:/path/to/story-tr" }
     }
   }
 }
 ```
 
+**方式 B：用解释器 + `-m`（不依赖 PATH，最稳）**
+
+```json
+{
+  "mcpServers": {
+    "story-tr": {
+      "command": "D:/path/to/story-tr/.venv/Scripts/python.exe",
+      "args": ["-m", "story_tr.mcp"],
+      "env": { "STORY_TR_HOME": "D:/path/to/story-tr" }
+    }
+  }
+}
+```
+
+macOS / Linux 把路径换成 `.venv/bin/story-tr-mcp` 或 `.venv/bin/python` 即可。
+
+| 字段 | 作用 |
+| --- | --- |
+| `command` | 启动的可执行文件（Windows 下正斜杠 `/` 可接受） |
+| `args` | 传给它的参数（`story-tr-mcp` 无需参数；`python -m` 时为 `["-m", "story_tr.mcp"]`） |
+| `env` | 附加环境变量；这里用 `STORY_TR_HOME` 指定**工作目录**（含 `data/` 的仓库根） |
+
 工作目录与 CLI 一致：`$STORY_TR_HOME` → 向上查找 `data/character.json` → 当前目录。
+
+> **关于 `npx` / `uvx`**：它们只是**免安装启动器** —— `npx` 运行 npm 包（Node），`uvx` 运行 PyPI 包（Python，需另装 `uv`）。本项目是**本地 Python 包**、未发布到 PyPI，故用上面的方式 A / B 即可。若已装 `uv`，也可直接从 git 跑（等价，二选一）：
+>
+> ```json
+> { "mcpServers": { "story-tr": { "command": "uvx",
+>   "args": ["--from", "story-tr[mcp] @ git+https://github.com/vers123/story-tr.git@v0.9.1", "story-tr-mcp"],
+>   "env": { "STORY_TR_HOME": "D:/path/to/story-tr" } } } }
+> ```
+
+### 分发到其它机器
+
+本包为纯 Python（`py3-none-any`），构建一个 wheel 即可在任意机器安装：
+
+```bash
+python -m build                                                # 产出 dist/*.whl（需 pip install -e ".[dev]"）
+pip install "dist/story_tr-0.9.1-py3-none-any.whl[mcp]"         # 目标机：注意要带 [mcp]
+```
+
+也可以不传文件、直接从 git 装：
+
+```bash
+pip install "story-tr[mcp] @ git+https://github.com/vers123/story-tr.git@v0.9.1"
+```
+
+**离线（内网）机器**：联网机先连依赖一起下载，再把 `bundle/` 拷过去：
+
+```bash
+pip download "dist/story_tr-0.9.1-py3-none-any.whl[mcp]" -d bundle   # 联网机
+pip install --no-index --find-links=bundle "story-tr[mcp]"           # 目标机
+```
+
+> **注意**：`mcp` 是可选依赖，wheel **不打包**它；extra 带 `python_version >= "3.10"` 标记，在 **Python 3.9** 上装 `[mcp]` 会**静默跳过**，此时 `story-tr-mcp` 会提示缺少 MCP 依赖。
+> `data/` 不入库，目标机装完仍需 `story-tr fetch` 生成，或直接拷贝 `data/` 过去。
 
 ### Tools（只读检索）
 
@@ -653,6 +713,14 @@ story-tr-mcp                     # 等价：python -m story_tr.mcp
 - 发布即打标签：`git tag -a vX.Y.Z -m "..."`（`v` 仅为标签约定，版本号本身遵循 SemVer）。
 
 ### 变更记录
+
+#### 0.9.1（2026-10-09）
+
+- **文档**：MCP 章节补成完整版
+  - 新增「客户端配置」：方式 A（可执行文件绝对路径）/ 方式 B（解释器 + `python -m story_tr.mcp`），含 `command` / `args` / `env` 字段说明
+  - 说明 `npx` / `uvx` 只是**免安装启动器**（分别对应 npm / PyPI 包），本项目为本地 Python 包未发布 PyPI；附 `uvx` + git 的可选写法
+  - 新增「分发到其它机器」：`python -m build` 出 wheel、`pip install "…whl[mcp]"`、git 直装、离线 `pip download` + `--no-index` 安装
+  - 目录结构补充 `dist/` / `build/` 与 MCP 子进程日志路径
 
 #### 0.9.0（2026-10-09）
 
