@@ -4,7 +4,8 @@
 
 - 分段：按 zh.md 正文段落（去 frontmatter，空行分隔），每段独立跑完整链路
 - 全文：整篇再独立跑一遍完整链路
-- 输出：result/{story}/full.json|mp3、seg_NN.json|mp3、segments.json（汇总）
+- 标题：frontmatter 的 title（如「角色详细」）也跑一遍完整链路
+- 输出：result/{story}/full.json|mp3、seg_NN.json|mp3、title.json|mp3、segments.json（汇总）
 - 续跑：根目录 .translate_stories_state.json（参数需一致；也可靠已有结果跳过）
 - 已有结果默认跳过，--overwrite 重跑；进度条用 tqdm
 - 批量：位置参数支持 id / 范围（如 10000002-10000030），或 --all-characters 处理全部角色
@@ -50,6 +51,28 @@ def read_paragraphs(md_path: str):
         if len(parts) >= 3:
             raw = parts[2]
     return [p.strip() for p in re.split(r"\n\s*\n", raw) if p.strip()]
+
+
+def read_title(md_path: str):
+    """读取 md frontmatter 里的 `title` 值（JSON 编码的字符串，如 `"角色详细"`）；无则返回 None。"""
+    with open(md_path, encoding="utf-8") as f:
+        raw = f.read()
+    if not raw.lstrip().startswith("---"):
+        return None
+    parts = raw.split("---", 2)
+    if len(parts) < 3:
+        return None
+    for line in parts[1].splitlines():
+        line = line.strip()
+        if line.startswith("title:"):
+            val = line[len("title:"):].strip()
+            if not val:
+                return None
+            try:
+                return json.loads(val)
+            except json.JSONDecodeError:
+                return val.strip().strip('"')
+    return None
 
 
 def story_dir(char_id: str) -> str:
@@ -138,7 +161,7 @@ def write_summary(char_id: str, story: str, provider, mode_label):
                "source_file": rel(os.path.join(STORY_ROOT, char_id, "profile", "story", story, "zh.md")),
                "provider": provider, "mode": mode_label,
                "generated_at": datetime.now().isoformat(timespec="seconds"),
-               "full": None, "segments": []}
+               "full": None, "title": None, "segments": []}
     full = os.path.join(d, "full.json")
     if os.path.exists(full):
         with open(full, encoding="utf-8") as f:
@@ -146,6 +169,13 @@ def write_summary(char_id: str, story: str, provider, mode_label):
         summary["full"] = {"source": r["source"], "languages": r["languages"],
                            "final": r["final"], "json": "full.json",
                            "mp3": "full.mp3" if os.path.exists(os.path.join(d, "full.mp3")) else None}
+    title = os.path.join(d, "title.json")
+    if os.path.exists(title):
+        with open(title, encoding="utf-8") as f:
+            r = json.load(f)
+        summary["title"] = {"source": r["source"], "languages": r["languages"],
+                            "final": r["final"], "json": "title.json",
+                            "mp3": "title.mp3" if os.path.exists(os.path.join(d, "title.mp3")) else None}
     seg_files = sorted(n for n in os.listdir(d)
                        if re.fullmatch(r"seg_\d+\.json", n))
     for name in seg_files:
@@ -190,9 +220,9 @@ def add_parser(sub):
     g = p.add_argument_group("输出内容")
     gsel = g.add_mutually_exclusive_group()
     gsel.add_argument("--full-only", action="store_true",
-                      help="只跑全文（跳过逐段任务；配合 --no-batch 时调用量约降到 1/14）")
+                      help="只跑全文（跳过逐段任务；标题始终翻译。配合 --no-batch 时调用量约降到 1/7）")
     gsel.add_argument("--segments-only", action="store_true",
-                      help="只跑逐段任务（跳过全文）")
+                      help="只跑逐段任务（跳过全文；标题始终翻译）")
 
     tc.add_common_args(p, default_mode="fixed")
 
@@ -305,6 +335,10 @@ def build_tasks(base, char_id, stories, log, parts="both"):
         if not paras:
             log.warning("跳过 %s/%s：zh.md 无正文", char_id, story)
             continue
+        title = read_title(md)
+        if title:
+            # 标题始终翻译（不受 --full-only / --segments-only 影响）
+            tasks.append({"story": story, "key": "title", "index": None, "text": title})
         if parts in ("both", "full"):
             tasks.append({"story": story, "key": "full", "index": None, "text": "\n\n".join(paras)})
         if parts in ("both", "segments"):

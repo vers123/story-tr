@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.6.2`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.7.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -187,6 +187,7 @@ story-tr fetch --refresh
 │       │       ├── {name_1}/{en,zh}.md      # 角色专属剧情（文件夹名为标题 slug）
 │       │       └── {name_2}/{en,zh}.md      # 神之眼 / 邪眼 等
 │       └── result/{story}/               # 由 `story-tr translate` 生成
+│           ├── title.json / title.mp3    # 标题（frontmatter 的 title，如「角色详细」）
 │           ├── full.json / full.mp3      # 全文（源文/语言/逐步/最终译文 + 语音）
 │           ├── seg_01.json / seg_01.mp3  # 各段同结构
 │           └── segments.json             # 汇总
@@ -461,13 +462,13 @@ story-tr translate 10000021 --no-batch
 | `--all-characters` | 处理 `data/character.json` 中的**全部角色**（与 `char_ids` 互斥） |
 | `--stories` | 只处理指定故事文件夹，逗号分隔（**不指定 = 处理全部含内容故事**） |
 | `--all` | 显式处理全部含内容故事（即默认行为） |
-| `--full-only` | 只跑**全文**（跳过逐段任务） |
-| `--segments-only` | 只跑**逐段**任务（跳过全文） |
+| `--full-only` | 只跑**全文**（跳过逐段任务；**标题始终翻译**） |
+| `--segments-only` | 只跑**逐段**任务（跳过全文；**标题始终翻译**） |
 | `--mode` / `--chain` / `--languages` / `--steps` | 同 `translate_chain.py`（默认 `fixed` + `asia`） |
 | `--provider` / `--proxy` | 同 `translate_chain.py` |
 | `--min-interval` | 同 `translate_chain.py`（Google 请求最小间隔，默认 `0.3`） |
 | `--workers` | 并发线程数（默认 `1`；建议 `3~4`，配合 `--min-interval` 控制总速率） |
-| `--no-batch` | 关闭批量：同一故事的逐段在每步**各自发请求**（默认合并为一次） |
+| `--no-batch` | 关闭批量：同一故事的标题与逐段在每步**各自发请求**（默认合并为一次） |
 | `--balance` | 同 `translate_chain.py`（多后端轮转分摊，默认关闭） |
 | `--overwrite` | 已有结果也重跑（默认跳过） |
 | `--reset` | 忽略旧批量状态 |
@@ -479,24 +480,25 @@ story-tr translate 10000021 --no-batch
 - **故事选择**：不指定 `--stories` 时，默认处理该角色的**全部含内容故事**
 - 分段：按 `zh.md` 正文段落（去 frontmatter）；每段独立跑完整链路
 - 全文：整篇再独立跑一遍完整链路
+- 标题：`zh.md` frontmatter 的 `title`（如「角色详细」）**始终**跑一遍完整链路，写入 `title.json`
 - **全部角色**（`--all-characters`）：处理 `data/character.json` 中的全部角色，进度用「角色」总进度条
-- 输出：`result/{story}/full.json|mp3`、`seg_NN.json|mp3`、`segments.json`（汇总：段号/源文/语言/最终结果/文件名）
+- 输出：`result/{story}/title.json|mp3`、`full.json|mp3`、`seg_NN.json|mp3`、`segments.json`（汇总：标题/段号/源文/语言/最终结果/文件名）
 - 每份 json = 链路结果（源文/检出语言/语言路线/逐步/最终译文）+ `story` / `segment_index` / `source_file`
 - 续跑：`.translate_stories_state.json`（批量级进度，参数一致才续；键为 `id|story|key`）；已有结果默认跳过
   - 参数与上次不一致时会要求加 `--reset`；`story-tr clean` 会**重置批次签名**，之后可用新参数直接运行
 - `random` 模式下每份独立随机；进度用 `tqdm`（批量时「角色」总进度条 + 每个角色的「翻译链」进度条）
 
-**批量请求**（默认开启）：同一故事的**全文 + 各分段**在每一语言步合并为**一次请求** —— 免费通道 `clients5` 支持同一请求多个 `q`，响应与 `q` 一一对应。
+**批量请求**（默认开启）：同一故事的**标题 + 全文 + 各分段**在每一语言步合并为**一次请求** —— 免费通道 `clients5` 支持同一请求多个 `q`，响应与 `q` 一一对应。
 - 实测：同一故事逐条 `29s` → 批量 `7s`（≈4×）；全量调用量 30 万 → **2.7 万**（≈11×，即 21h → ≈1.9h）
 - 等价性：`fixed`/`custom` 下与逐条**结果完全一致**（连续 6 组对照零差异）
 - 每步请求仍按「组内累计 ≤ `1500` 字符」分块（沿用长文本分块阈值），通道不支持批量或返回形状异常时**自动退化为逐条**
 - `random` 模式（每份独立随机）下**自动关闭**批量，保持每份随机链独立；`--no-batch` 可显式关闭
 - 若某次请求的形状不符（如端点变更），会退化为逐条，不影响结果正确性
-- **注意**：批量开启（默认）时，逐段与全文共用同一请求（平均 907 字符/组，上限 1500），因此 `--full-only` / `--segments-only` 只省约 **20%**（≈1.9h → ≈1.5h）；它们的主要价值是减少产物文件与磁盘占用
+- **注意**：批量开启（默认）时，标题、逐段与全文共用同一请求（平均 907 字符/组，上限 1500），因此 `--full-only` / `--segments-only` 只省约 **20%**（≈1.9h → ≈1.5h）；它们的主要价值是减少产物文件与磁盘占用
 
 ### `story-tr clean`
 
-清理 `{id}/result/` 下的翻译产物（`full.*` / `seg_NN.*` / `segments.json` 等），用于重跑、换链或释放空间。
+清理 `{id}/result/` 下的翻译产物（`title.*` / `full.*` / `seg_NN.*` / `segments.json` 等），用于重跑、换链或释放空间。
 
 ```bash
 # 清理单个角色的 result/ 内容
@@ -566,6 +568,11 @@ story-tr clean --all-characters --dry-run
 - 发布即打标签：`git tag -a vX.Y.Z -m "..."`（`v` 仅为标签约定，版本号本身遵循 SemVer）。
 
 ### 变更记录
+
+#### 0.7.0（2026-10-09）
+
+- **新增**：**标题也翻译** —— `zh.md` frontmatter 的 `title`（如「角色详细」）**始终**跑一遍完整链路，输出 `result/{story}/title.json|mp3`，并在汇总 `segments.json` 中新增 `title` 字段（含 `source` / `languages` / `final` / `json` / `mp3`）
+  - 该任务**不受** `--full-only` / `--segments-only` 影响；批量开启时与全文、各分段**合并进同一请求**
 
 #### 0.6.2（2026-10-09）
 

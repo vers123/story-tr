@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """批量翻译：分块打包、批量/逐条派发、多条同步走链、输出内容开关与签名。"""
+import json
 import logging
 import types
 
@@ -128,15 +129,41 @@ def test_run_chain_many_splits_by_detected_language(monkeypatch):
 def test_build_tasks_parts_filter(tmp_path):
     d = tmp_path / "vision"
     d.mkdir()
-    (d / "zh.md").write_text("第一段\n\n第二段\n", encoding="utf-8")
+    (d / "zh.md").write_text(
+        '---\nid: "1"\nstory: vision\nlang: zh\ntitle: "神之眼"\n---\n\n第一段\n\n第二段\n',
+        encoding="utf-8")
 
     def keys(parts):
         return [t["key"] for t in
                 stories.build_tasks(str(tmp_path), "1", ["vision"], LOG, parts)]
 
-    assert keys("both") == ["full", "seg_01", "seg_02"]
-    assert keys("full") == ["full"]
-    assert keys("segments") == ["seg_01", "seg_02"]
+    assert keys("both") == ["title", "full", "seg_01", "seg_02"]
+    assert keys("full") == ["title", "full"]  # 标题始终翻译，不受开关影响
+    assert keys("segments") == ["title", "seg_01", "seg_02"]
+
+
+def test_read_title_from_frontmatter(tmp_path):
+    md = tmp_path / "zh.md"
+    md.write_text('---\nid: "1"\nstory: vision\nlang: zh\ntitle: "角色详细"\n---\n\n正文\n',
+                  encoding="utf-8")
+    assert stories.read_title(str(md)) == "角色详细"
+    plain = tmp_path / "plain.md"
+    plain.write_text("没有 frontmatter 的正文\n", encoding="utf-8")
+    assert stories.read_title(str(plain)) is None
+
+
+def test_write_summary_includes_title(tmp_path, monkeypatch):
+    monkeypatch.setattr(stories, "story_dir", lambda cid: str(tmp_path))
+    d = tmp_path / "vision"
+    d.mkdir()
+    (d / "title.json").write_text(
+        json.dumps({"source": "角色详细", "languages": ["ja"], "final": "X"},
+                   ensure_ascii=False), encoding="utf-8")
+    stories.write_summary("1", "vision", "google", "fixed/asia")
+    out = json.loads((d / "segments.json").read_text(encoding="utf-8"))
+    assert out["title"]["source"] == "角色详细"
+    assert out["title"]["languages"] == ["ja"]
+    assert out["title"]["json"] == "title.json"
 
 
 def _fake_args(**kw):
