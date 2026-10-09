@@ -15,7 +15,9 @@ from story_tr.mcp import server  # noqa: E402
 def test_registers_tools():
     s = server.build_server()
     names = sorted(t.name for t in asyncio.run(s.list_tools()))
-    assert names == ["get_result_summary", "list_characters", "list_stories", "read_result_item"]
+    assert names == ["chain", "clean", "fetch_start", "get_result_summary", "job_cancel",
+                     "job_list", "job_status", "list_characters", "list_stories",
+                     "read_result_item", "translate_start"]
 
 
 def test_registers_resources_and_templates():

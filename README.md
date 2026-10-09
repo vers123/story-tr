@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.8.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.9.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -19,7 +19,7 @@
 - [数据约定](#数据约定)
 - [数据文件说明](#数据文件说明)
 - [命令（CLI）](#命令cli)
-- [MCP Server（只读）](#mcp-server只读)
+- [MCP Server](#mcp-server)
 - [依赖与许可](#依赖与许可)
 - [版本与变更](#版本与变更)
 
@@ -55,7 +55,7 @@ python main.py --help                  # 也可 python -m story_tr / python scri
 
 安装后提供命令 **`story-tr`**；等价入口还有 `python -m story_tr` 与 `python main.py`。
 
-> **MCP Server（可选）**：如需把项目接入 MCP 客户端，额外安装可选依赖：`pip install -e ".[mcp]"`（官方 `mcp` SDK **需 Python ≥3.10**）。安装后提供命令 **`story-tr-mcp`**（等价 `python -m story_tr.mcp`），详见「[MCP Server（只读）](#mcp-server只读)」。
+> **MCP Server（可选）**：如需把项目接入 MCP 客户端，额外安装可选依赖：`pip install -e ".[mcp]"`（官方 `mcp` SDK **需 Python ≥3.10**）。安装后提供命令 **`story-tr-mcp`**（等价 `python -m story_tr.mcp`），详见「[MCP Server](#mcp-server)」。
 
 > **venv 下命令不在 PATH**：需先激活，或写全路径 `.venv\Scripts\story-tr.exe`（macOS/Linux 为 `.venv/bin/story-tr`）。
 
@@ -204,10 +204,11 @@ story-tr fetch --refresh
 │   ├── chain.py                        # story-tr chain（翻译链核心）
 │   ├── stories.py                      # story-tr translate（批量翻译）
 │   ├── clean.py                        # story-tr clean（清理 result/）
-│   └── mcp/                            # story-tr-mcp（MCP Server，只读；需可选依赖）
+│   └── mcp/                            # story-tr-mcp（MCP Server；需可选依赖）
 │       ├── server.py                   # Tool / Resource 注册 + stdio 运行
-│       ├── tools.py                    # 只读工具函数（不依赖 mcp）
-│       └── resources.py                # 只读资源函数（不依赖 mcp）
+│       ├── tools.py                    # Tool 函数（不依赖 mcp）
+│       ├── resources.py                # Resource 函数（不依赖 mcp）
+│       └── jobs.py                     # 长任务：串行队列 / 进度 / 取消（不依赖 mcp）
 ├── scripts/                            # 兼容入口（转发到包内实现）
 │   ├── sync_from_site.py               # = story-tr fetch
 │   ├── sync_story_folders.py           # = story-tr folders
@@ -539,9 +540,9 @@ story-tr clean --all-characters --dry-run
 - **默认同步清理**状态记录：移除 `.translate_stories_state.json` 中对应的 `id|story|key` 条目，并**重置批次签名** —— 否则重跑 `translate` 会把这些任务当成「已完成」而跳过，或因签名不一致要求 `--reset`；`--keep-state` 可保留
 - 角色选择语义与 `story-tr translate` 完全一致（含范围内不存在 id 的跳过提示）
 
-## MCP Server（只读）
+## MCP Server
 
-把项目接入支持 **MCP**（Model Context Protocol）的客户端（Trae / Claude Desktop / Cursor 等），让模型直接查询角色、故事与翻译结果。
+把项目接入支持 **MCP**（Model Context Protocol）的客户端（Trae / Claude Desktop / Cursor 等），让模型直接查询角色、故事与翻译结果，并可**触发**翻译/抓取等长任务。
 
 ```bash
 # 安装可选依赖（官方 mcp SDK，需 Python ≥3.10）
@@ -566,7 +567,7 @@ story-tr-mcp                     # 等价：python -m story_tr.mcp
 
 工作目录与 CLI 一致：`$STORY_TR_HOME` → 向上查找 `data/character.json` → 当前目录。
 
-### Tools（检索）
+### Tools（只读检索）
 
 | Tool | 说明 |
 | --- | --- |
@@ -574,6 +575,23 @@ story-tr-mcp                     # 等价：python -m story_tr.mcp
 | `list_stories(char_id)` | 某角色的故事：文件夹名 / 中英标题 / 段落数 |
 | `get_result_summary(char_id, story)` | 翻译结果概要（标题 / 全文 / 各段的源文与最终译文） |
 | `read_result_item(char_id, story, key)` | 单条明细：`key` 取 `full` / `title` / `seg_NN` |
+
+### Tools（同步：联网 / 写盘）
+
+| Tool | 说明 |
+| --- | --- |
+| `chain(text, …)` | 单条文本跑「来回翻译 N 次」链路（联网，**同步**返回逐步与最终译文） |
+| `clean(char_ids, …)` | 清理 `result/`；**默认只预览**（`dry_run=true`），需 `dry_run=false` **且** `confirm=true` 才真删 |
+
+### Tools（长任务：start / status 轮询）
+
+| Tool | 说明 |
+| --- | --- |
+| `translate_start(char_ids, …)` | 启动批量翻译，**立即返回 `job_id`** |
+| `fetch_start(update=true)` | 启动数据抓取（默认 `--update` 增量），返回 `job_id` |
+| `job_status(job_id)` | 查询 `state`（queued/running/succeeded/failed/cancelled）/ `progress`（`done`/`total`）/ `returncode` / 日志尾行 |
+| `job_cancel(job_id)` | 取消（排队中直接取消；运行中**终止子进程**） |
+| `job_list` | 列出全部任务（新 → 旧） |
 
 ### Resources（内容）
 
@@ -584,7 +602,13 @@ story-tr-mcp                     # 等价：python -m story_tr.mcp
 | `story://story/{id}/{story}/{lang}` | 故事原文 Markdown（`lang` = `zh` / `en`，含 frontmatter） |
 | `story://result/{id}/{story}` | 翻译结果概要 `segments.json`（JSON） |
 
-> 本版为 **P1：只读** —— 不联网、不写盘；`translate` / `fetch` / `clean` 等写操作未暴露（后续版本再评估）。
+> **长任务说明**：`translate` / `fetch` 由 MCP 以**子进程**调用既有 CLI（`python -m story_tr …`），
+> 同一时刻**只跑一个写任务**（串行队列），避免多个任务争用 `.translate_stories_state.json`；
+> 子进程输出写入 `logs/mcp_<job_id>.log`（`logs/` 已忽略）；job 表存在**内存**中，服务重启即丢列表，但底层断点仍在（重跑可续）。
+> `translate` 只暴露安全参数（`char_ids` / `stories` / `mode` / `chain` / `workers` / `provider` / `full_only` / `segments_only`），
+> **不含** `--overwrite` / `--reset`。
+>
+> 工具/资源报错会把**原因**透传给客户端（如「未知 job_id：…」「尚无翻译结果：…」），便于模型自我纠正。
 
 ## 依赖与许可
 
@@ -629,6 +653,16 @@ story-tr-mcp                     # 等价：python -m story_tr.mcp
 - 发布即打标签：`git tag -a vX.Y.Z -m "..."`（`v` 仅为标签约定，版本号本身遵循 SemVer）。
 
 ### 变更记录
+
+#### 0.9.0（2026-10-09）
+
+- **新增**：**MCP 写操作与长任务**（在 0.8.0 只读版基础上补齐）
+  - 同步：`chain`（单条文本翻译链，联网）、`clean`（**默认只预览**，需 `dry_run=false` 且 `confirm=true` 才真删）
+  - 长任务：`translate_start` / `fetch_start`（返回 `job_id`）+ `job_status` / `job_cancel` / `job_list`
+  - 执行方式：以**子进程**调用既有 CLI（`python -m story_tr …`）；**串行队列**（同一时刻只跑一个写任务）；支持**取消**（终止子进程）
+  - `translate` 进度 = 预算任务总数 + 读 `.translate_stories_state.json` 的已完成数；job 表存**内存**，子进程输出写入 `logs/mcp_<job_id>.log`
+  - `translate` 只暴露安全参数，**不含** `--overwrite` / `--reset`
+  - 工具/资源报错改为把**原因**透传给客户端（`ToolError` / `ResourceError`），原先只显示 "Error executing tool …"
 
 #### 0.8.0（2026-10-09）
 
