@@ -84,30 +84,47 @@ def save_state(state):
 # --------------------------------------------------------------------------- #
 # 单次链路
 # --------------------------------------------------------------------------- #
+def run_chain_many(texts, languages, providers, cfg, log, extras=None):
+    """多条文本同步走同一条链，返回与 texts 同序的结果 dict 列表。
+
+    先按**检出语言**分组（同一分组才能共享每步的 src/tgt），各步用
+    `tc.translate_step_many` 推进——是否合并为一次请求由 `tc.translate_many` 决定。
+    """
+    texts = list(texts)
+    extras = list(extras) if extras else [{} for _ in texts]
+    dets = [tc.detect_language(t) for t in texts]
+    results = [None] * len(texts)
+    for det in dict.fromkeys(dets):
+        idx = [i for i, d in enumerate(dets) if d == det]
+        started = datetime.now().isoformat(timespec="seconds")
+        cur = {i: texts[i] for i in idx}
+        steps = {i: [] for i in idx}
+        for k, task in enumerate(tc.build_tasks(det, languages)):
+            provider, outs = tc.translate_step_many(
+                [cur[i] for i in idx], task["src"], task["tgt"], providers, cfg, log)
+            for pos, i in enumerate(idx):
+                cur[i] = outs[pos]
+                steps[i].append({"index": k, "kind": task["kind"], "lang": task["lang"],
+                                 "provider": provider, "text": outs[pos]})
+        for i in idx:
+            results[i] = {
+                "source": texts[i],
+                "source_detected_lang": det,
+                "target_lang": tc.TARGET_ZH,
+                "provider": providers[0] if len(providers) == 1 else providers,
+                "languages": languages,
+                "steps": steps[i],
+                "final": cur[i],
+                "started_at": started,
+                "finished_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            results[i].update(extras[i])
+    return results
+
+
 def run_chain(text, languages, providers, cfg, log, extra):
-    detected = tc.detect_language(text)
-    tasks = tc.build_tasks(detected, languages)
-    started = datetime.now().isoformat(timespec="seconds")
-    cur = text
-    steps = []
-    for i, task in enumerate(tasks):
-        provider, out = tc.translate_step(cur, task["src"], task["tgt"], providers, cfg, log)
-        cur = out
-        steps.append({"index": i, "kind": task["kind"], "lang": task["lang"],
-                      "provider": provider, "text": out})
-    result = {
-        "source": text,
-        "source_detected_lang": detected,
-        "target_lang": tc.TARGET_ZH,
-        "provider": providers[0] if len(providers) == 1 else providers,
-        "languages": languages,
-        "steps": steps,
-        "final": cur,
-        "started_at": started,
-        "finished_at": datetime.now().isoformat(timespec="seconds"),
-    }
-    result.update(extra)
-    return result
+    """单条文本跑链路（`run_chain_many` 的兼容封装）。"""
+    return run_chain_many([text], languages, providers, cfg, log, [extra])[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -170,11 +187,20 @@ def add_parser(sub):
     g.add_argument("--all", action="store_true",
                    help="处理选中角色的全部含内容故事（即不指定 --stories 时的默认行为）")
 
+    g = p.add_argument_group("输出内容")
+    gsel = g.add_mutually_exclusive_group()
+    gsel.add_argument("--full-only", action="store_true",
+                      help="只跑全文（跳过逐段任务，调用量约降到 1/14）")
+    gsel.add_argument("--segments-only", action="store_true",
+                      help="只跑逐段任务（跳过全文）")
+
     tc.add_common_args(p, default_mode="fixed")
 
     g = p.add_argument_group("批量")
     g.add_argument("--workers", type=int, default=1,
                    help="并发线程数（默认 1；建议 3~4，配合 --min-interval 控制总速率）")
+    g.add_argument("--no-batch", action="store_true",
+                   help="关闭批量：同一故事的逐段在每步各自发请求（默认合并为一次）")
     g.add_argument("--overwrite", action="store_true", help="已有结果也重跑（默认跳过）")
     g.add_argument("--reset", action="store_true", help="忽略旧批量状态")
     p.set_defaults(func=main)
@@ -226,13 +252,17 @@ def resolve_stories(args, char_id):
 
 def signature(args, char_ids):
     all_stories = args.all or not args.stories.strip()
-    return {"characters": char_ids,
-            "stories": "ALL" if all_stories else [s.strip() for s in args.stories.split(",") if s.strip()],
-            "mode": args.mode,
-            "chain": args.chain if args.mode == "fixed" else None,
-            "steps": args.steps if args.mode == "random" else None,
-            "languages": args.languages if args.mode == "custom" else None,
-            "provider": args.provider}
+    sig = {"characters": char_ids,
+           "stories": "ALL" if all_stories else [s.strip() for s in args.stories.split(",") if s.strip()],
+           "mode": args.mode,
+           "chain": args.chain if args.mode == "fixed" else None,
+           "steps": args.steps if args.mode == "random" else None,
+           "languages": args.languages if args.mode == "custom" else None,
+           "provider": args.provider}
+    parts = parts_label(args)
+    if parts != "both":  # 只产出部分内容时任务集合不同，需写进签名；默认不写以兼容旧状态
+        sig["parts"] = parts
+    return sig
 
 
 def prepare_state(state, sig, reset):
@@ -255,7 +285,16 @@ def prepare_state(state, sig, reset):
     return new_state, completed, None
 
 
-def build_tasks(base, char_id, stories, log):
+def parts_label(args):
+    """本次要产出的内容：both（全文+分段）/ full / segments。"""
+    if args.full_only:
+        return "full"
+    if args.segments_only:
+        return "segments"
+    return "both"
+
+
+def build_tasks(base, char_id, stories, log, parts="both"):
     tasks = []
     for story in stories:
         md = os.path.join(base, story, "zh.md")
@@ -266,9 +305,11 @@ def build_tasks(base, char_id, stories, log):
         if not paras:
             log.warning("跳过 %s/%s：zh.md 无正文", char_id, story)
             continue
-        tasks.append({"story": story, "key": "full", "index": None, "text": "\n\n".join(paras)})
-        for i, para in enumerate(paras, 1):
-            tasks.append({"story": story, "key": "seg_%02d" % i, "index": i, "text": para})
+        if parts in ("both", "full"):
+            tasks.append({"story": story, "key": "full", "index": None, "text": "\n\n".join(paras)})
+        if parts in ("both", "segments"):
+            for i, para in enumerate(paras, 1):
+                tasks.append({"story": story, "key": "seg_%02d" % i, "index": i, "text": para})
     return tasks
 
 
@@ -289,7 +330,11 @@ def main(args) -> int:
     cfg = tc.build_cfg(args)
     providers = [args.provider] if args.provider else ["google", "bing", "baidu"]
     provider_label = providers[0] if len(providers) == 1 else " → ".join(providers)
+    parts = parts_label(args)
+    batch = not args.no_batch and args.mode != "random"  # random 下每份独立随机，不做批量
     mode_label = args.mode + ("/" + args.chain if args.mode == "fixed" else "")
+    if batch:
+        mode_label += "+批量"
 
     all_ids = load_char_ids()
     char_ids = all_ids if args.all_characters else parse_char_ids(args.char_ids, all_ids)
@@ -311,7 +356,7 @@ def main(args) -> int:
             for char_id in outer:
                 base = os.path.join(STORY_ROOT, char_id, "profile", "story")
                 stories = resolve_stories(args, char_id)
-                tasks = build_tasks(base, char_id, stories, log) if stories else []
+                tasks = build_tasks(base, char_id, stories, log, parts) if stories else []
                 if not tasks:
                     log.warning("跳过 %s：没有可处理的故事", char_id)
                     continue
@@ -327,42 +372,68 @@ def main(args) -> int:
                 stats = {"n": 0}
                 state_lock = threading.Lock()
 
-                def _process(task):
-                    """处理一份结果（可被多线程并发调用；共享状态加锁）。"""
-                    story, key, idx, text = task["story"], task["key"], task["index"], task["text"]
-                    d, json_path, mp3_path = result_paths(char_id, story, key)
-                    os.makedirs(d, exist_ok=True)
-                    state_key = "%s|%s|%s" % (char_id, story, key)
+                # 批量：同一故事的全部任务为一组（各步同步推进，每步合并为一次请求）
+                grouped = {}
+                for t in tasks:
+                    grouped.setdefault(t["story"], []).append(t)
+                units = list(grouped.values()) if batch else [[t] for t in tasks]
+
+                def _skip_it(task, json_path):
+                    """已完成（文件在或状态里有）则记数并返回 True。"""
+                    state_key = "%s|%s|%s" % (char_id, task["story"], task["key"])
                     with state_lock:
-                        skip = not args.overwrite and (os.path.exists(json_path)
-                                                       or state_key in completed)
-                    if skip:
-                        with state_lock:
-                            done_stories.add(story)
+                        if not args.overwrite and (os.path.exists(json_path)
+                                                   or state_key in completed):
+                            done_stories.add(task["story"])
                             stats["n"] += 1
-                        return
-                    languages, chain_label = tc.resolve_languages(args)
-                    log.info(">>> %s/%s/%s (%d 字)：%s", char_id, story, key, len(text),
-                             " → ".join(languages))
-                    result = run_chain(text, languages, providers, cfg, log,
-                                       {"story": story, "segment_index": idx,
-                                        "source_file": rel(os.path.join(base, story, "zh.md")),
-                                        "mode": args.mode, "chain": chain_label})
+                            return True
+                    return False
+
+                def _save(task, json_path, mp3_path, result):
                     with open(json_path, "w", encoding="utf-8") as f:
                         json.dump(result, f, ensure_ascii=False, indent=2)
                     if not args.no_tts:
                         try:
-                            audio = tc.google_tts_bytes(result["final"], tc.TARGET_ZH, cfg.get("proxies"))
+                            audio = tc.google_tts_bytes(result["final"], tc.TARGET_ZH,
+                                                        cfg.get("proxies"))
                             with open(mp3_path, "wb") as f:
                                 f.write(audio)
                         except Exception as exc:  # noqa: BLE001
-                            log.warning("语音生成失败（%s/%s/%s）：%s", char_id, story, key, exc)
+                            log.warning("语音生成失败（%s/%s/%s）：%s", char_id, task["story"],
+                                        task["key"], exc)
                     with state_lock:
-                        completed.add(state_key)
+                        completed.add("%s|%s|%s" % (char_id, task["story"], task["key"]))
                         state["completed"] = sorted(completed)
                         save_state(state)
-                        done_stories.add(story)
+                        done_stories.add(task["story"])
                         stats["n"] += 1
+
+                def _process_unit(unit):
+                    """处理一组任务（可被多线程并发调用；共享状态加锁），返回该组任务数。"""
+                    todo = []
+                    for t in unit:
+                        d, json_path, mp3_path = result_paths(char_id, t["story"], t["key"])
+                        os.makedirs(d, exist_ok=True)
+                        if not _skip_it(t, json_path):
+                            todo.append((t, json_path, mp3_path))
+                    if todo:
+                        languages, chain_label = tc.resolve_languages(args)
+                        extras = [{"story": t["story"], "segment_index": t["index"],
+                                   "source_file": rel(os.path.join(base, t["story"], "zh.md")),
+                                   "mode": args.mode, "chain": chain_label}
+                                  for t, _, _ in todo]
+                        log.info(">>> %s：%d 条（%s）：%s", char_id, len(todo),
+                                 ",".join(sorted({t["story"] for t, _, _ in todo})),
+                                 " → ".join(languages))
+                        if len(todo) > 1:
+                            results = run_chain_many([t["text"] for t, _, _ in todo],
+                                                     languages, providers, cfg, log, extras)
+                        else:
+                            results = [run_chain(t["text"], languages, providers, cfg, log,
+                                                 extras[0]) for t, _, _ in todo]
+                        for (t, json_path, mp3_path), res in zip(todo, results):
+                            _save(t, json_path, mp3_path, res)
+                    return len(unit)
 
                 bar = tqdm(total=len(tasks), desc="翻译链", unit="份",
                            position=1 if len(char_ids) > 1 else 0,
@@ -370,14 +441,12 @@ def main(args) -> int:
                 try:
                     if args.workers > 1:
                         with ThreadPoolExecutor(max_workers=args.workers) as ex:
-                            futures = [ex.submit(_process, t) for t in tasks]
+                            futures = [ex.submit(_process_unit, u) for u in units]
                             for fut in as_completed(futures):
-                                fut.result()
-                                bar.update(1)
+                                bar.update(fut.result())
                     else:
-                        for t in tasks:
-                            _process(t)
-                            bar.update(1)
+                        for u in units:
+                            bar.update(_process_unit(u))
                 finally:
                     bar.close()
                 processed += stats["n"]

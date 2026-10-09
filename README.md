@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.5.1`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.6.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -301,7 +301,7 @@ title: "角色详细"
 | `story-tr fetch [--update\|--refresh]` | 拉取并生成/校正角色数据；`--update` 发现新角色并只重写变化项 |
 | `story-tr folders` | 按 `character.json` 的 `stories` 同步重命名故事文件夹 |
 | `story-tr chain [text]` | 单文本「来回翻译 N 次」链路（最后译回中文） |
-| `story-tr translate <id/范围>` | 批量翻译角色故事，结果落入 `{id}/result/` |
+| `story-tr translate <id/范围>` | 批量翻译角色故事，结果落入 `{id}/result/`（默认合并请求；`--full-only` 只出全文） |
 | `story-tr clean <id/范围>` | 清理 `{id}/result/` 下的翻译产物（保留 `result/` 目录本身） |
 
 ### `story-tr fetch`
@@ -444,6 +444,15 @@ story-tr translate --all-characters --workers 4 --min-interval 0.25
 
 # 覆盖已有结果、关闭语音
 story-tr translate 10000021 --overwrite --no-tts
+
+# 只要最终译文（跳过逐段任务，调用量约降到 1/14）
+story-tr translate --all-characters --full-only
+
+# 只要逐段译文（跳过全文）
+story-tr translate 10000021 --segments-only
+
+# 关闭批量（同一故事的逐段在每步各自发请求）
+story-tr translate 10000021 --no-batch
 ```
 
 | 参数 | 说明 |
@@ -452,10 +461,13 @@ story-tr translate 10000021 --overwrite --no-tts
 | `--all-characters` | 处理 `data/character.json` 中的**全部角色**（与 `char_ids` 互斥） |
 | `--stories` | 只处理指定故事文件夹，逗号分隔（**不指定 = 处理全部含内容故事**） |
 | `--all` | 显式处理全部含内容故事（即默认行为） |
+| `--full-only` | 只跑**全文**（跳过逐段任务，调用量约降到 1/14） |
+| `--segments-only` | 只跑**逐段**任务（跳过全文） |
 | `--mode` / `--chain` / `--languages` / `--steps` | 同 `translate_chain.py`（默认 `fixed` + `asia`） |
 | `--provider` / `--proxy` | 同 `translate_chain.py` |
 | `--min-interval` | 同 `translate_chain.py`（Google 请求最小间隔，默认 `0.3`） |
 | `--workers` | 并发线程数（默认 `1`；建议 `3~4`，配合 `--min-interval` 控制总速率） |
+| `--no-batch` | 关闭批量：同一故事的逐段在每步**各自发请求**（默认合并为一次） |
 | `--balance` | 同 `translate_chain.py`（多后端轮转分摊，默认关闭） |
 | `--overwrite` | 已有结果也重跑（默认跳过） |
 | `--reset` | 忽略旧批量状态 |
@@ -473,6 +485,13 @@ story-tr translate 10000021 --overwrite --no-tts
 - 续跑：`.translate_stories_state.json`（批量级进度，参数一致才续；键为 `id|story|key`）；已有结果默认跳过
   - 参数与上次不一致时会要求加 `--reset`；`story-tr clean` 会**重置批次签名**，之后可用新参数直接运行
 - `random` 模式下每份独立随机；进度用 `tqdm`（批量时「角色」总进度条 + 每个角色的「翻译链」进度条）
+
+**批量请求**（默认开启）：同一故事的**全文 + 各分段**在每一语言步合并为**一次请求** —— 免费通道 `clients5` 支持同一请求多个 `q`，响应与 `q` 一一对应。
+- 实测：同一故事逐条 `29s` → 批量 `7s`（≈4×）；全量调用量 30 万 → 约 **2.6 万**（≈11×，即 21h → ≈2h）
+- 等价性：`fixed`/`custom` 下与逐条**结果完全一致**（连续 6 组对照零差异）
+- 每步请求仍按「组内累计 ≤ `1500` 字符」分块（沿用长文本分块阈值），通道不支持批量或返回形状异常时**自动退化为逐条**
+- `random` 模式（每份独立随机）下**自动关闭**批量，保持每份随机链独立；`--no-batch` 可显式关闭
+- 若某次请求的形状不符（如端点变更），会退化为逐条，不影响结果正确性
 
 ### `story-tr clean`
 
@@ -546,6 +565,15 @@ story-tr clean --all-characters --dry-run
 - 发布即打标签：`git tag -a vX.Y.Z -m "..."`（`v` 仅为标签约定，版本号本身遵循 SemVer）。
 
 ### 变更记录
+
+#### 0.6.0（2026-10-09）
+
+- **新增**：**批量请求**（默认开启）—— 同一故事的全文与各分段在每一语言步合并为**一次请求**（`clients5` 支持重复 `q`，响应与 `q` 一一对应）
+  - 实测同一故事逐条 `29s` → 批量 `7s`；全量调用量 30 万 → 约 2.6 万（≈11×，21h → ≈2h）
+  - `fixed`/`custom` 下与逐条**结果完全一致**（6 组对照零差异）；形状异常/通道不支持时**自动退化为逐条**
+  - `random` 模式自动关闭批量；`--no-batch` 可显式关闭
+- **新增**：`--full-only` / `--segments-only` —— 只产出全文或只产出逐段（`--full-only` 可把调用量降到约 1/14）
+- **变更**：`chain.py` 抽出 `_step_loop` / `_translate_with_providers`，单条与批量共用同一套「限流退避 + 业务重试 + 后端切换」逻辑
 
 #### 0.5.1（2026-10-09）
 

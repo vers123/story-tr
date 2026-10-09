@@ -290,6 +290,26 @@ def _google_dict_translate(text: str, src: str, tgt: str, proxies) -> str:
     return out
 
 
+def _google_dict_translate_batch(texts, src: str, tgt: str, proxies):
+    """一次请求翻译多条文本（clients5 支持重复 `q`，响应与 `q` 一一对应）。
+
+    实测：2 条 `q` → 2 个元素（同一 `q` 内的多句会被合并成一个字符串）。
+    形状不符时抛 BusinessError，由调用方退化为逐条。
+    """
+    qs = [("client", "dict-chrome-ex"), ("sl", src), ("tl", tgt)] + [("q", t) for t in texts]
+    resp = requests.get(GOOGLE_DICT_URL, params=qs,
+                        headers={"User-Agent": GOOGLE_UA}, timeout=30,
+                        proxies=proxies or None)
+    if resp.status_code == 429:
+        raise RateLimited("google(dict) HTTP 429 被限流")
+    resp.raise_for_status()
+    data = resp.json()
+    if (isinstance(data, list) and len(data) == len(texts)
+            and all(isinstance(x, str) and x.strip() for x in data)):
+        return [x.strip() for x in data]
+    raise BusinessError("google(dict) 批量返回形状不符（期望 %d 条）" % len(texts))
+
+
 def _google_api_translate(text: str, src: str, tgt: str, cfg: dict) -> str:
     """Google Cloud Translation v2（官方 API，用 GOOGLE_API_KEY；稳定、有配额、支持长文本）。"""
     payload = {"q": text, "target": tgt, "format": "text"}
@@ -500,6 +520,48 @@ def translate_once(provider: str, text: str, src_code: str, tgt_code: str, cfg: 
     return "".join(_translate_once_raw(provider, c, src_code, tgt_code, cfg) for c in chunks)
 
 
+def _pack_chunks(items, limit: int = MAX_CHARS_PER_REQUEST):
+    """把 [(文本下标, 块)] 按累计长度打包成若干组（每组一次请求）。"""
+    groups, cur, size = [], [], 0
+    for it in items:
+        n = len(it[1])
+        if cur and size + n > limit:
+            groups.append(cur)
+            cur, size = [], 0
+        cur.append(it)
+        size += n
+    if cur:
+        groups.append(cur)
+    return groups
+
+
+def translate_many(provider: str, texts, src_code: str, tgt_code: str, cfg: dict):
+    """批量翻译多条文本，返回与 texts 同序的结果。
+
+    仅 google 的免 key 通道（clients5）支持合并请求；其它情况退化为逐条调用。
+    每条文本仍按 MAX_CHARS_PER_REQUEST 切块，再按累计长度分组，每组一次请求。
+    """
+    texts = list(texts)
+    if len(texts) <= 1 or provider != "google" or cfg.get("google_api_key"):
+        return [translate_once(provider, t, src_code, tgt_code, cfg) for t in texts]
+
+    flat = [(i, chunk) for i, t in enumerate(texts) for chunk in _split_text(t)]
+    got = {}
+    for group in _pack_chunks(flat):
+        qs = [c for _, c in group]
+        if len(qs) == 1:
+            res = [translate_once("google", qs[0], src_code, tgt_code, cfg)]
+        else:
+            try:
+                _throttle("google", cfg)
+                res = _google_dict_translate_batch(qs, src_code, tgt_code, cfg.get("proxies"))
+            except BusinessError:
+                res = [translate_once("google", q, src_code, tgt_code, cfg) for q in qs]
+        for (i, _), out in zip(group, res):
+            got.setdefault(i, []).append(out)
+    return ["".join(got.get(i, [])) for i in range(len(texts))]
+
+
 def _translate_once_raw(provider: str, text: str, src_code: str, tgt_code: str, cfg: dict) -> str:
     def _run(fn):
         try:
@@ -556,15 +618,15 @@ def order_providers(providers, balance: bool):
     return providers[i:] + providers[:i]
 
 
-def translate_step(text: str, src_code: str, tgt_code: str, providers, cfg, log):
-    """返回 (provider, 结果文本)。
+def _step_loop(provider, call, cfg, log):
+    """在「限流退避 + 业务重试」包裹下执行 call()。
 
-    - 被限流（429）：退避等待后重试**同一后端**（不切后端）
-    - 连接类错误（超时/DNS/SSL/拒连）：立即切换后端
-    - 业务类错误（内容/参数/空结果）：重试 MAX_ATTEMPTS 次后暂停
+    - 被限流（429）：退避等待后重试**同一后端**（不切后端），耗尽则抛 RateLimited
+    - 业务类错误（内容/参数/空结果）：重试 MAX_ATTEMPTS 次后抛 Paused
+    - 连接类错误（超时/DNS/SSL/拒连）：抛 ConnectionIssue，由调用方切后端
     """
 
-    def _retryer(provider, label, exc_type, wait, stop, max_times):
+    def _retryer(label, exc_type, wait, stop, max_times):
         """构造 tenacity 重试器（退避/次数/日志交给 tenacity）。"""
         def _before_sleep(retry_state):
             sleep = retry_state.next_action.sleep if retry_state.next_action else 0
@@ -574,6 +636,28 @@ def translate_step(text: str, src_code: str, tgt_code: str, providers, cfg, log)
         return Retrying(retry=retry_if_exception_type(exc_type), wait=wait, stop=stop,
                         before_sleep=_before_sleep, reraise=True)
 
+    business = _retryer("业务错误", BusinessError,
+                        wait_incrementing(start=2, increment=2, max=8),
+                        stop_after_attempt(MAX_ATTEMPTS), MAX_ATTEMPTS - 1)
+    rate_limit = _retryer("被限流", RateLimited,
+                          wait_exponential(multiplier=RATE_LIMIT_BASE_WAIT,
+                                           max=RATE_LIMIT_MAX_WAIT),
+                          stop_after_attempt(RATE_LIMIT_MAX_RETRIES + 1),
+                          RATE_LIMIT_MAX_RETRIES)
+    try:
+        for attempt in rate_limit:
+            with attempt:
+                for inner in business:
+                    with inner:
+                        return call()
+    except BusinessError as exc:
+        raise Paused("后端 %s 业务错误，重试 %d 次仍失败：%s"
+                     % (provider, MAX_ATTEMPTS - 1, exc))
+    return None
+
+
+def _translate_with_providers(providers, cfg, log, call):
+    """按后端顺序执行 call(provider)，返回 (provider, 结果)；错误处理规则见 `_step_loop`。"""
     conn_failed = []
     for provider in order_providers(providers, cfg.get("balance")):
         ok, reason = provider_available(provider, cfg)
@@ -581,25 +665,8 @@ def translate_step(text: str, src_code: str, tgt_code: str, providers, cfg, log)
             log.warning("  后端 %s 不可用（%s），跳过", provider, reason)
             conn_failed.append("%s 不可用：%s" % (provider, reason))
             continue
-        # 同一后端：业务错误重试 MAX_ATTEMPTS 次；被限流则退避重试（都不切后端）
-        business = _retryer(provider, "业务错误", BusinessError,
-                            wait_incrementing(start=2, increment=2, max=8),
-                            stop_after_attempt(MAX_ATTEMPTS), MAX_ATTEMPTS - 1)
-        rate_limit = _retryer(provider, "被限流", RateLimited,
-                              wait_exponential(multiplier=RATE_LIMIT_BASE_WAIT,
-                                               max=RATE_LIMIT_MAX_WAIT),
-                              stop_after_attempt(RATE_LIMIT_MAX_RETRIES + 1),
-                              RATE_LIMIT_MAX_RETRIES)
-        out = None
         try:
-            for attempt in rate_limit:
-                with attempt:
-                    for inner in business:
-                        with inner:
-                            out = translate_once(provider, text, src_code, tgt_code, cfg)
-        except BusinessError as exc:
-            raise Paused("后端 %s 业务错误，重试 %d 次仍失败：%s"
-                         % (provider, MAX_ATTEMPTS - 1, exc))
+            out = _step_loop(provider, lambda p=provider: call(p), cfg, log)
         except RateLimited as exc:
             conn_failed.append("%s 被限流，重试 %d 次仍失败：%s"
                                % (provider, RATE_LIMIT_MAX_RETRIES, exc))
@@ -608,10 +675,32 @@ def translate_step(text: str, src_code: str, tgt_code: str, providers, cfg, log)
             log.warning("  [%s] 连接失败：%s → 切换后端", provider, exc)
             conn_failed.append("%s 连接失败：%s" % (provider, exc))
             continue
-        log.info("  [%s] %s → %s：%s", provider, lang_label(src_code),
-                 lang_label(tgt_code), out)
         return provider, out
     raise ConnectionIssue("所有后端均不可用：\n    - " + "\n    - ".join(conn_failed))
+
+
+def translate_step(text: str, src_code: str, tgt_code: str, providers, cfg, log):
+    """返回 (provider, 结果文本)。规则见 `_step_loop`。"""
+    provider, out = _translate_with_providers(
+        providers, cfg, log, lambda p: translate_once(p, text, src_code, tgt_code, cfg))
+    log.info("  [%s] %s → %s：%s", provider, lang_label(src_code), lang_label(tgt_code), out)
+    return provider, out
+
+
+def translate_step_many(texts, src_code: str, tgt_code: str, providers, cfg, log):
+    """一次把多条文本推进同一语言步骤，返回 (provider, 结果列表)。
+
+    仅一条时等价于 `translate_step`；多条时由 `translate_many` 决定是否合并为一次请求。
+    """
+    texts = list(texts)
+    if len(texts) == 1:
+        provider, out = translate_step(texts[0], src_code, tgt_code, providers, cfg, log)
+        return provider, [out]
+    provider, outs = _translate_with_providers(
+        providers, cfg, log, lambda p: translate_many(p, texts, src_code, tgt_code, cfg))
+    log.info("  [%s] %s → %s：%d 条（批量）", provider, lang_label(src_code),
+             lang_label(tgt_code), len(texts))
+    return provider, outs
 
 
 # --------------------------------------------------------------------------- #
