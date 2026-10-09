@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# 虚拟环境
+.venv/
+venv/
+
+# 密钥 / 本地配置
+.env
+
+# 运行产物
+logs/
+out/
+.translate_state.json
+.translate_stories_state.json
+
+# 抓取数据
+data/
