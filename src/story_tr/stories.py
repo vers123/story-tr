@@ -190,7 +190,7 @@ def add_parser(sub):
     g = p.add_argument_group("输出内容")
     gsel = g.add_mutually_exclusive_group()
     gsel.add_argument("--full-only", action="store_true",
-                      help="只跑全文（跳过逐段任务，调用量约降到 1/14）")
+                      help="只跑全文（跳过逐段任务；配合 --no-batch 时调用量约降到 1/14）")
     gsel.add_argument("--segments-only", action="store_true",
                       help="只跑逐段任务（跳过全文）")
 
