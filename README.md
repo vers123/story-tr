@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.6.1`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.6.2`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -566,6 +566,10 @@ story-tr clean --all-characters --dry-run
 - 发布即打标签：`git tag -a vX.Y.Z -m "..."`（`v` 仅为标签约定，版本号本身遵循 SemVer）。
 
 ### 变更记录
+
+#### 0.6.2（2026-10-09）
+
+- **修复**：批量请求模式下，google 免 key 通道的**连接类异常**（超时 / DNS / SSL 等）未归一化为 `ConnectionIssue`，会以原始 `requests` 异常穿透重试与后端切换逻辑，导致 CLI 打印 traceback 崩溃；现改为归一化处理，**自动切换到下一后端**（单条路径原本已正确处理，仅批量分支遗漏）
 
 #### 0.6.1（2026-10-09）
 

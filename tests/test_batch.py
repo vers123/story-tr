@@ -3,6 +3,8 @@
 import logging
 import types
 
+import pytest
+
 from story_tr import chain as tc
 from story_tr import stories
 
@@ -63,6 +65,30 @@ def test_translate_many_batch_shape_error_falls_back(monkeypatch):
 
     monkeypatch.setattr(tc, "_google_dict_translate_batch", bad_batch)
     assert tc.translate_many("google", ["a", "b"], "en", "zh", {}) == ["A", "B"]
+
+
+def test_translate_many_batch_connection_error_is_classified(monkeypatch):
+    """批量通道的连接类异常应归一化为 ConnectionIssue（交上层切后端），而非裸抛崩溃。"""
+    monkeypatch.setattr(tc, "_throttle", lambda p, cfg: None)
+
+    def timeout(*a, **k):
+        raise tc.requests.exceptions.ConnectTimeout("连接客户端超时")
+
+    monkeypatch.setattr(tc, "_google_dict_translate_batch", timeout)
+    with pytest.raises(tc.ConnectionIssue):
+        tc.translate_many("google", ["a", "b"], "en", "zh", {})
+
+
+def test_translate_many_batch_rate_limited_propagates(monkeypatch):
+    """限流（429）应由 _step_loop 退避重试同一后端，故 RateLimited 必须原样抛出。"""
+    monkeypatch.setattr(tc, "_throttle", lambda p, cfg: None)
+
+    def limited(*a, **k):
+        raise tc.RateLimited("google(dict) HTTP 429 被限流")
+
+    monkeypatch.setattr(tc, "_google_dict_translate_batch", limited)
+    with pytest.raises(tc.RateLimited):
+        tc.translate_many("google", ["a", "b"], "en", "zh", {})
 
 
 def test_run_chain_many_all_texts_advance_together(monkeypatch):

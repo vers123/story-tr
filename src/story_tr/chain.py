@@ -556,7 +556,13 @@ def translate_many(provider: str, texts, src_code: str, tgt_code: str, cfg: dict
                 _throttle("google", cfg)
                 res = _google_dict_translate_batch(qs, src_code, tgt_code, cfg.get("proxies"))
             except BusinessError:
+                # 形状异常等业务错误：批量通道不可用，退化为逐条
                 res = [translate_once("google", q, src_code, tgt_code, cfg) for q in qs]
+            except ChainError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                # 原始 requests 异常（超时/DNS/SSL 等）归一化为 ConnectionIssue，交上层切后端
+                _classify_and_raise(exc)
         for (i, _), out in zip(group, res):
             got.setdefault(i, []).append(out)
     return ["".join(got.get(i, [])) for i in range(len(texts))]
