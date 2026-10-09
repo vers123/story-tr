@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.4.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.4.1`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -54,6 +54,8 @@ python main.py --help                  # 也可 python -m story_tr / python scri
 
 安装后提供命令 **`story-tr`**；等价入口还有 `python -m story_tr` 与 `python main.py`。
 
+> **什么时候需要重新安装**：editable 安装（`pip install -e .`）指向 `src/`，**改代码后无需重装**；但 `pyproject.toml` 的元数据（依赖、入口点、版本号）是安装时的快照，**改过之后要再跑一次** `pip install -e ".[dev]"` 刷新。
+
 > **venv 下命令不在 PATH**：需先激活，或写全路径 `.venv\Scripts\story-tr.exe`（macOS/Linux 为 `.venv/bin/story-tr`）。
 
 > 工作目录（`data/`、`logs/`、`out/`、`.env`）默认按 `--data-dir` → `$STORY_TR_HOME` → 向上查找 `data/character.json` → 当前目录 的顺序确定。
@@ -80,6 +82,7 @@ copy .env.example .env                 # macOS/Linux: cp .env.example .env
 
 - 只要**数据** → 做到第 2 步即可（产出 `data/`）。
 - 只要**翻译结果** → 需要先有 `data/`，再执行第 3 步。
+- 站点数据有更新时（新角色 / 故事改动）→ `story-tr fetch --update`（发现新角色 + 只重写变化项）。
 - 未安装也能跑：把 `story-tr xxx` 换成 `python main.py xxx` 或 `python scripts/xxx.py`（兼容入口）。
 
 ## 数据来源
@@ -171,7 +174,7 @@ story-tr fetch --refresh
 .
 ├── data/                               # ★ 不入库：由 `story-tr fetch` 生成（见「数据来源」）
 │   ├── character.json                  # 角色索引（id/名称 + path/stories）
-│   ├── _fetch_all.json                 # 原始抓取缓存（断点续抓用）
+│   ├── _fetch_all.json                 # 原始抓取缓存（断点续抓 + 内容指纹 hash，供 --update 检测变化）
 │   └── story/character/{id}/
 │       ├── profile/
 │       │   ├── meta.json                 # 语言无关属性（rank/element/birthday/…）
@@ -508,6 +511,13 @@ story-tr translate 10000021 --overwrite --no-tts
 - 发布即打标签：`git tag -a vX.Y.Z -m "..."`（`v` 仅为标签约定，版本号本身遵循 SemVer）。
 
 ### 变更记录
+
+#### 0.4.1（2026-10-09）
+
+- **文档**：安装一节补充「[什么时候需要重新安装](#安装)」—— editable 改代码免重装，改 `pyproject.toml` 的依赖/入口点/版本需重装
+- **文档**：快速开始补充数据更新命令 `story-tr fetch --update`；`_fetch_all.json` 说明补充「内容指纹」
+- **工程**：`.gitignore` 补充覆盖率、类型检查缓存与系统临时文件
+- 纯文档与配置变更：无代码行为变化（PATCH）
 
 #### 0.4.0（2026-10-09）
 
