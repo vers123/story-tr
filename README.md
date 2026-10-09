@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.3.1`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.4.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -132,16 +132,20 @@ copy .env.example .env                 # macOS/Linux: cp .env.example .env
 
 ```bash
 # 增量抓取：只补缺失项（默认）
-.venv\Scripts\python scripts\sync_from_site.py
+story-tr fetch
 
-# 重新抓取：忽略缓存，强制从网站重新拉取全部角色
-.venv\Scripts\python scripts\sync_from_site.py --refresh
+# 更新数据：发现新角色 + 检测内容变化，只重写变化项
+story-tr fetch --update
+
+# 重新抓取：忽略缓存，强制从网站重新拉取并重写全部角色
+story-tr fetch --refresh
 ```
 
 特点：
 
 - 一次跑完全部角色，自动生成 `meta.json` / `text.json` / 各故事 `en.md`+`zh.md` / `character.json`
-- 结果缓存到 `data/_fetch_all.json`，可**重复运行**（只补缺失项，支持断点续抓）
+- 结果缓存到 `data/_fetch_all.json`，可**重复运行**（支持断点续抓）；每条带内容指纹，供 `--update` 检测变化
+- **更新数据**：`--update` 从站点列表发现新角色、按指纹只重写变化项，并同步更新 `character.json`
 - **重新抓取**：加 `--refresh` 忽略缓存强制重抓（或先删除 `data/_fetch_all.json` 再运行）
 - 抓取与生成过程各有一条 `tqdm` 进度条（`抓取` / `生成`，按角色）
 - 请求自带重试，结尾输出**校验信息**（slug 与 `stories` 是否一致、无故事角色、名字差异等）
@@ -293,31 +297,42 @@ title: "角色详细"
 
 | 子命令 | 作用 |
 | --- | --- |
-| `story-tr fetch` | 从 Project Amber 拉取并生成/校正全部角色数据 |
+| `story-tr fetch [--update\|--refresh]` | 拉取并生成/校正角色数据；`--update` 发现新角色并只重写变化项 |
 | `story-tr folders` | 按 `character.json` 的 `stories` 同步重命名故事文件夹 |
 | `story-tr chain [text]` | 单文本「来回翻译 N 次」链路（最后译回中文） |
 | `story-tr translate <id/范围>` | 批量翻译角色故事，结果落入 `{id}/result/` |
 
 ### `story-tr fetch`
 
-从 Project Amber（yatta.moe）拉取**全部角色**的 en / chs 数据（`avatar` + `avatarFetter`），生成/校正各角色的 `meta.json`、`text.json`、全部故事 `en.md`/`zh.md`，并重写 `data/character.json`（即「[数据来源](#数据来源) · 获取方式 · 方式二」）。
+从 Project Amber（yatta.moe）拉取各角色的 en / chs 数据（`avatar` + `avatarFetter`），生成/校正 `meta.json`、`text.json`、全部故事 `en.md`/`zh.md`，并重写 `data/character.json`（即「[数据来源](#数据来源) · 获取方式 · 方式二」）。
 
 ```bash
-# 增量：只抓缺失项（默认，走缓存 data/_fetch_all.json）
+# 增量：只补缺失项（默认，走缓存 data/_fetch_all.json）
 story-tr fetch
 
-# 重新抓取：忽略缓存，强制从网站重新拉取全部角色
+# 更新数据：发现新角色 + 检测已有角色内容变化，只重写变化项（建议定期跑）
+story-tr fetch --update
+
+# 保险丝：忽略缓存，强制重抓并重写全部角色
 story-tr fetch --refresh
 ```
 
-| 参数 | 说明 |
-| --- | --- |
-| （无） | 增量抓取：读缓存，只补缺失的 avatar / story |
-| `--refresh` | 忽略缓存，**强制重新抓取全部角色**并覆盖缓存 |
+| 模式 | 联网拉站点列表 | 重抓范围 | 重写范围 |
+| --- | --- | --- | --- |
+| `fetch`（默认） | ✗ | 仅缺失 | 全部（幂等） |
+| `fetch --update` | ✓ | 全部（为检测变化） | **仅变化项** |
+| `fetch --refresh` | ✗ | 全部 | 全部 |
 
 行为说明：
 
-- 抓取结果缓存到 `data/_fetch_all.json`，可**重复运行**（只补缺失项，支持断点续抓）
+- 抓取结果缓存到 `data/_fetch_all.json`，可**重复运行**（支持断点续抓）；每条记录带**内容指纹 `hash`**
+- **`--update`（更新数据）**：
+  - 从站点列表接口 `/api/v2/{lang}/avatar` 取**当前全部角色 id**，按 `{id}-{element}` → `{id}` 归一（旅行者的分元素条目归到同一角色），据此**发现新角色**；
+  - 全量重抓后比对内容指纹，**只有内容变化的角色才重写文件**，并输出**变更报告**（新增角色 / 站点已移除 / 变化明细 / 未变化数）；
+  - **`data/character.json` 同步更新**：新角色自动追加（`name_en`/`name_zh`/`path`/`stories` 自动派生），站点新增的故事自动追加到该角色 `stories`；
+  - 旧缓存记录没有 `hash` 时，本次会全部重抓以**首次建立指纹基线**（之后才是增量）；
+  - 站点已移除的 id **本地保留**（仅在报告中提示），不会自动删除。
+- 首次使用（本地无 `data/character.json`）会自动按站点列表初始化
 - 想从零重抓，也可直接**删除 `data/_fetch_all.json`** 后运行（效果等同 `--refresh`）
 - 进度：`抓取`（本次待抓角色数）与 `生成`（写入文件的角色数）两条 `tqdm` 进度条，均为按角色
 - 按「[数据约定](#数据约定)」生成 slug、段落、`cv` 等
@@ -493,6 +508,13 @@ story-tr translate 10000021 --overwrite --no-tts
 - 发布即打标签：`git tag -a vX.Y.Z -m "..."`（`v` 仅为标签约定，版本号本身遵循 SemVer）。
 
 ### 变更记录
+
+#### 0.4.0（2026-10-09）
+
+- **新增**：`story-tr fetch --update` —— **更新数据**：从站点角色列表发现新角色（`{id}-{element}` 归一）、按内容指纹检测已有角色变化、**只重写变化项**并输出变更报告
+- **新增**：抓取记录带**内容指纹 `hash`**（存于 `data/_fetch_all.json`），旧缓存首次运行会建立基线
+- **新增**：`data/character.json` 同步更新 —— 新角色自动追加、站点新增的故事自动追加到 `stories`
+- **修复**：本地无 `data/character.json` 时（全新克隆）自动按站点列表初始化，不再直接报错
 
 #### 0.3.1（2026-10-09）
 
