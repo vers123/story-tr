@@ -7,9 +7,10 @@
 - 输出：result/{story}/full.json|mp3、seg_NN.json|mp3、segments.json（汇总）
 - 续跑：根目录 .translate_stories_state.json（参数需一致；也可靠已有结果跳过）
 - 已有结果默认跳过，--overwrite 重跑；进度条用 tqdm
-- 批量：--all-characters 处理 data/character.json 中的所有角色
+- 批量：位置参数支持 id / 范围（如 10000002-10000030），或 --all-characters 处理全部角色
+- 故事：不指定 --stories 时处理该角色的全部含内容故事
 
-默认：--stories amber_journal、--mode fixed --chain asia（20 次）。
+默认：全部含内容故事、--mode fixed --chain asia（20 次）。
 """
 from __future__ import annotations
 
@@ -19,6 +20,8 @@ import logging
 import os
 import re
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from tqdm import tqdm
@@ -149,47 +152,81 @@ def write_summary(char_id: str, story: str, provider, mode_label):
 # CLI
 # --------------------------------------------------------------------------- #
 def parse_args(argv=None):
-    p = argparse.ArgumentParser(description="对角色故事跑翻译链并把结果落入 result/")
-    p.add_argument("char_id", nargs="?", help="角色 id，如 10000021（配合 --all-characters 时可省略）")
-    p.add_argument("--all-characters", action="store_true",
-                   help="处理 data/character.json 中的所有角色")
-    p.add_argument("--stories", default="amber_journal",
-                   help="故事文件夹名，逗号分隔（默认 amber_journal）")
-    p.add_argument("--all", action="store_true", help="处理该角色所有含 zh 内容的故事")
-    p.add_argument("--mode", choices=["fixed", "random", "custom"], default="fixed")
-    p.add_argument("--chain", choices=list(tc.CHAINS), default="asia")
-    p.add_argument("--languages", default="")
-    p.add_argument("--steps", type=int, default=20)
-    p.add_argument("--provider", choices=["google", "bing", "baidu"], default=None)
-    p.add_argument("--proxy", default="")
-    p.add_argument("--min-interval", type=float, default=tc.GOOGLE_MIN_INTERVAL,
-                   help="Google 请求最小间隔秒数，避免触发限流（默认 %.1f）" % tc.GOOGLE_MIN_INTERVAL)
-    p.add_argument("--overwrite", action="store_true", help="已有结果也重跑")
-    p.add_argument("--reset", action="store_true", help="忽略旧批量状态")
-    p.add_argument("--no-tts", action="store_true", help="不生成语音")
-    p.add_argument("--no-file-log", action="store_true", help="不写文件日志")
+    p = argparse.ArgumentParser(
+        description="对角色故事跑翻译链并把结果落入 result/",
+        epilog="示例：%(prog)s 10000021   |   %(prog)s 10000002-10000030   |   "
+               "%(prog)s 10000021,10000025-10000030 --stories amber_journal,vision",
+    )
+    p.add_argument("char_ids", nargs="*",
+                   help="角色 id / 范围（空格或逗号分隔）：10000021 / 10000002-10000030 / 10000021,10000025-10000030")
+
+    g = p.add_argument_group("角色选择")
+    g.add_argument("--all-characters", action="store_true",
+                   help="处理 data/character.json 中的全部角色（与 char_ids 互斥）")
+
+    g = p.add_argument_group("故事选择")
+    g.add_argument("--stories", default="",
+                   help="只处理指定故事文件夹，逗号分隔（不指定 = 处理全部含内容故事）")
+    g.add_argument("--all", action="store_true",
+                   help="处理选中角色的全部含内容故事（即不指定 --stories 时的默认行为）")
+
+    tc.add_common_args(p, default_mode="fixed")
+
+    g = p.add_argument_group("批量")
+    g.add_argument("--workers", type=int, default=1,
+                   help="并发线程数（默认 1；建议 3~4，配合 --min-interval 控制总速率）")
+    g.add_argument("--overwrite", action="store_true", help="已有结果也重跑（默认跳过）")
+    g.add_argument("--reset", action="store_true", help="忽略旧批量状态")
     return p.parse_args(argv)
 
 
-def resolve_stories(args, char_id):
-    base = os.path.join(STORY_ROOT, char_id, "profile", "story")
-    if args.all:
-        if not os.path.isdir(base):
-            return []
-        out = []
-        for n in sorted(os.listdir(base)):
-            if not os.path.isdir(os.path.join(base, n)):
+def parse_char_ids(tokens, all_ids):
+    """解析 char_ids（含 `起始-结束` 范围）→ 按 character.json 顺序返回其中存在的 id。"""
+    want = set()
+    for tok in tokens:
+        for part in tok.replace(" ", "").split(","):
+            if not part:
                 continue
-            md = os.path.join(base, n, "zh.md")
-            if os.path.exists(md) and read_paragraphs(md):
-                out.append(n)
-        return out
-    return [s.strip() for s in args.stories.split(",") if s.strip()]
+            if "-" in part:
+                a, b = part.split("-", 1)
+                try:
+                    start, end = int(a), int(b)
+                except ValueError:
+                    raise SystemExit("无法解析 id 范围：%s（应形如 10000002-10000030）" % part)
+                if start > end:
+                    start, end = end, start
+                want.update(str(i) for i in range(start, end + 1))
+            else:
+                want.add(part)
+    have = set(all_ids)
+    missing = sorted(want - have)
+    if missing:
+        print("提示：以下 id 不在 character.json 中，已跳过：%s" % ",".join(missing))
+    return [i for i in all_ids if i in want]
+
+
+def resolve_stories(args, char_id):
+    """返回该角色要处理的故事：指定了 --stories 就只用它，否则取全部含内容故事。"""
+    names = [s.strip() for s in args.stories.split(",") if s.strip()]
+    if names and not args.all:
+        return names
+    base = os.path.join(STORY_ROOT, char_id, "profile", "story")
+    if not os.path.isdir(base):
+        return []
+    out = []
+    for n in sorted(os.listdir(base)):
+        if not os.path.isdir(os.path.join(base, n)):
+            continue
+        md = os.path.join(base, n, "zh.md")
+        if os.path.exists(md) and read_paragraphs(md):
+            out.append(n)
+    return out
 
 
 def signature(args, char_ids):
+    all_stories = args.all or not args.stories.strip()
     return {"characters": char_ids,
-            "stories": "ALL" if args.all else [s.strip() for s in args.stories.split(",") if s.strip()],
+            "stories": "ALL" if all_stories else [s.strip() for s in args.stories.split(",") if s.strip()],
             "mode": args.mode,
             "chain": args.chain if args.mode == "fixed" else None,
             "steps": args.steps if args.mode == "random" else None,
@@ -216,8 +253,12 @@ def build_tasks(base, char_id, stories, log):
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    if not args.char_id and not args.all_characters:
-        print("请指定 char_id，或用 --all-characters 处理全部角色。")
+    if args.char_ids and args.all_characters:
+        print("不能同时指定角色 id 与 --all-characters，请二选一。")
+        return 1
+    if not args.char_ids and not args.all_characters:
+        print("请指定角色 id / 范围（如 10000021 或 10000002-10000030），"
+              "或用 --all-characters 处理全部角色。")
         return 1
 
     log, logfile = tc.setup_logging(args.no_file_log)
@@ -230,9 +271,10 @@ def main(argv=None) -> int:
     provider_label = providers[0] if len(providers) == 1 else " → ".join(providers)
     mode_label = args.mode + ("/" + args.chain if args.mode == "fixed" else "")
 
-    char_ids = load_char_ids() if args.all_characters else [args.char_id]
-    if not args.all_characters and not resolve_stories(args, args.char_id):
-        print("没有可处理的故事（检查 --stories / --all / zh.md 是否为空）")
+    all_ids = load_char_ids()
+    char_ids = all_ids if args.all_characters else parse_char_ids(args.char_ids, all_ids)
+    if not char_ids:
+        print("没有匹配到任何角色 id；请对照 data/character.json 检查。")
         return 1
 
     sig = signature(args, char_ids)
@@ -248,7 +290,7 @@ def main(argv=None) -> int:
 
     processed = 0
     outer = tqdm(char_ids, desc="角色", unit="个", position=0,
-                 disable=not args.all_characters, dynamic_ncols=True)
+                 disable=len(char_ids) <= 1, dynamic_ncols=True)
     try:
         with outer:
             for char_id in outer:
@@ -261,23 +303,29 @@ def main(argv=None) -> int:
 
                 line = "角色 %s，故事 %s，共 %d 份结果（%s）" % (
                     char_id, ",".join(stories), len(tasks), mode_label)
-                if args.all_characters:
+                if len(char_ids) > 1:
                     tqdm.write(line)
                 else:
                     print(line)
 
                 done_stories = set()
-                for task in tqdm(tasks, desc="翻译链", unit="份",
-                                 position=1 if args.all_characters else 0,
-                                 leave=not args.all_characters, dynamic_ncols=True):
+                stats = {"n": 0}
+                state_lock = threading.Lock()
+
+                def _process(task):
+                    """处理一份结果（可被多线程并发调用；共享状态加锁）。"""
                     story, key, idx, text = task["story"], task["key"], task["index"], task["text"]
                     d, json_path, mp3_path = result_paths(char_id, story, key)
                     os.makedirs(d, exist_ok=True)
                     state_key = "%s|%s|%s" % (char_id, story, key)
-                    if not args.overwrite and (os.path.exists(json_path) or state_key in completed):
-                        done_stories.add(story)
-                        processed += 1
-                        continue
+                    with state_lock:
+                        skip = not args.overwrite and (os.path.exists(json_path)
+                                                       or state_key in completed)
+                    if skip:
+                        with state_lock:
+                            done_stories.add(story)
+                            stats["n"] += 1
+                        return
                     languages, chain_label = tc.resolve_languages(args)
                     log.info(">>> %s/%s/%s (%d 字)：%s", char_id, story, key, len(text),
                              " → ".join(languages))
@@ -294,11 +342,30 @@ def main(argv=None) -> int:
                                 f.write(audio)
                         except Exception as exc:  # noqa: BLE001
                             log.warning("语音生成失败（%s/%s/%s）：%s", char_id, story, key, exc)
-                    completed.add(state_key)
-                    state["completed"] = sorted(completed)
-                    save_state(state)
-                    done_stories.add(story)
-                    processed += 1
+                    with state_lock:
+                        completed.add(state_key)
+                        state["completed"] = sorted(completed)
+                        save_state(state)
+                        done_stories.add(story)
+                        stats["n"] += 1
+
+                bar = tqdm(total=len(tasks), desc="翻译链", unit="份",
+                           position=1 if len(char_ids) > 1 else 0,
+                           leave=len(char_ids) <= 1, dynamic_ncols=True)
+                try:
+                    if args.workers > 1:
+                        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+                            futures = [ex.submit(_process, t) for t in tasks]
+                            for fut in as_completed(futures):
+                                fut.result()
+                                bar.update(1)
+                    else:
+                        for t in tasks:
+                            _process(t)
+                            bar.update(1)
+                finally:
+                    bar.close()
+                processed += stats["n"]
 
                 for story in done_stories:
                     write_summary(char_id, story, provider_label, mode_label)
@@ -319,10 +386,11 @@ def main(argv=None) -> int:
 
     if os.path.exists(STATE_PATH):
         os.remove(STATE_PATH)
-    if args.all_characters:
-        print("完成。处理 %d 个角色、%d 份结果，结果在各 {id}/result/ 下。" % (len(char_ids), processed))
+    if len(char_ids) == 1:
+        print("完成。结果目录：%s" % rel(os.path.join(story_dir(char_ids[0]), "")))
     else:
-        print("完成。结果目录：%s" % rel(os.path.join(story_dir(args.char_id), "")))
+        print("完成。处理 %d 个角色、%d 份结果，结果在各 {id}/result/ 下。"
+              % (len(char_ids), processed))
     if logfile:
         print("日志：%s" % rel(logfile))
     return 0

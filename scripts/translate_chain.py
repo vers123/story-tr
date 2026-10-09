@@ -31,12 +31,14 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import logging
 import os
 import random
 import re
 import sys
+import threading
 import time
 from datetime import datetime
 from html import unescape
@@ -138,11 +140,25 @@ def normalize_detected(code: str) -> str:
     return DETECT_TO_GOOGLE.get(c, c)
 
 
+_detect_lock = threading.Lock()
+_detect_ready = False
+
+
 def detect_language(text: str) -> str:
-    """判定源语言（固定 langdetect seed，保证结果可复现）。"""
+    """判定源语言（固定 langdetect seed，保证结果可复现）。
+
+    langdetect 的 `init_factory()` 非线程安全（profile 未加载完就被并发调用会抛
+    `Need to load profiles`），故首次调用在锁内预热一次，之后即可并发使用。
+    """
+    global _detect_ready
     from langdetect import DetectorFactory, detect
 
-    DetectorFactory.seed = 0
+    if not _detect_ready:
+        with _detect_lock:
+            if not _detect_ready:
+                DetectorFactory.seed = 0
+                detect("warmup")  # 触发 profile 加载完成
+                _detect_ready = True
     return normalize_detected(detect(text))
 
 
@@ -199,22 +215,27 @@ GOOGLE_API_URL = "https://translation.googleapis.com/language/translate/v2"
 GOOGLE_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
              "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
+# 单次请求的文本上限：Google 免费 GET 端点约 1800 字（中文 URL 编码后约 9 字节/字）即 400，故留余量
+MAX_CHARS_PER_REQUEST = 1500
+
 # 各后端最小请求间隔（秒）：取 max(--min-interval, 该后端下限)
 # 百度翻译开放平台标准版 QPS=1，故下限 1.1s
 PROVIDER_MIN_INTERVAL = {"google": 0.0, "bing": 0.0, "baidu": 1.1}
 _last_req_ts = {}
+_throttle_lock = threading.Lock()
 
 
 def _throttle(provider, cfg):
-    """按后端保持最小请求间隔，避免触发限流。"""
+    """按后端保持最小请求间隔（线程安全：持锁等待即形成全局速率限制）。"""
     interval = max(float(cfg.get("min_interval") or 0),
                    PROVIDER_MIN_INTERVAL.get(provider, 0.0))
     if interval <= 0:
         return
-    wait = _last_req_ts.get(provider, 0.0) + interval - time.monotonic()
-    if wait > 0:
-        time.sleep(wait)
-    _last_req_ts[provider] = time.monotonic()
+    with _throttle_lock:
+        wait = _last_req_ts.get(provider, 0.0) + interval - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_req_ts[provider] = time.monotonic()
 
 
 # Bing 网页版翻译（免 key 通道）
@@ -445,7 +466,35 @@ def _classify_and_raise(exc):
     raise BusinessError("%s: %s" % (name, msg))
 
 
+def _split_text(text: str, limit: int = MAX_CHARS_PER_REQUEST):
+    """把超长文本切成 ≤ limit 的片段（优先按句末标点，必要时硬切）。"""
+    if not text or len(text) <= limit:
+        return [text] if text else []
+    chunks, cur = [], ""
+    for piece in re.split(r"(?<=[。！？；!?;.\n])", text):
+        if not piece:
+            continue
+        if cur and len(cur) + len(piece) > limit:
+            chunks.append(cur)
+            cur = ""
+        while len(piece) > limit:
+            chunks.append(piece[:limit])
+            piece = piece[limit:]
+        cur += piece
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
 def translate_once(provider: str, text: str, src_code: str, tgt_code: str, cfg: dict) -> str:
+    """翻译一段文本；超长时按块翻译后拼接（免费端点对超长文本会报 400）。"""
+    chunks = _split_text(text)
+    if len(chunks) <= 1:
+        return _translate_once_raw(provider, text, src_code, tgt_code, cfg)
+    return "".join(_translate_once_raw(provider, c, src_code, tgt_code, cfg) for c in chunks)
+
+
+def _translate_once_raw(provider: str, text: str, src_code: str, tgt_code: str, cfg: dict) -> str:
     def _run(fn):
         try:
             out = fn()
@@ -487,6 +536,20 @@ def translate_once(provider: str, text: str, src_code: str, tgt_code: str, cfg: 
 # --------------------------------------------------------------------------- #
 # 带重试 / 后端切换的翻译
 # --------------------------------------------------------------------------- #
+_balance_cursor = itertools.count()
+_balance_lock = threading.Lock()
+
+
+def order_providers(providers, balance: bool):
+    """balance=True 时轮转后端顺序，让多个后端分摊请求（默认保持原顺序 = 主后端优先）。"""
+    providers = list(providers)
+    if not balance or len(providers) < 2:
+        return providers
+    with _balance_lock:
+        i = next(_balance_cursor) % len(providers)
+    return providers[i:] + providers[:i]
+
+
 def translate_step(text: str, src_code: str, tgt_code: str, providers, cfg, log):
     """返回 (provider, 结果文本)。
 
@@ -506,7 +569,7 @@ def translate_step(text: str, src_code: str, tgt_code: str, providers, cfg, log)
                         before_sleep=_before_sleep, reraise=True)
 
     conn_failed = []
-    for provider in providers:
+    for provider in order_providers(providers, cfg.get("balance")):
         ok, reason = provider_available(provider, cfg)
         if not ok:
             log.warning("  后端 %s 不可用（%s），跳过", provider, reason)
@@ -633,24 +696,36 @@ def setup_logging(no_file_log: bool):
 # --------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------- #
+def add_common_args(p, default_mode="random"):
+    """注册两个脚本共用的「翻译链 / 后端与速率 / 输出」参数（统一 CLI 设计）。"""
+    g = p.add_argument_group("翻译链")
+    g.add_argument("--mode", choices=["fixed", "random", "custom"], default=default_mode,
+                   help="路线模式（默认 %s）" % default_mode)
+    g.add_argument("--chain", choices=list(CHAINS), default="asia",
+                   help="fixed 模式使用哪套链（默认 asia）")
+    g.add_argument("--languages", default="", help="custom 模式的语言序列，逗号分隔")
+    g.add_argument("--steps", type=int, default=20, help="random 模式抽取语言数（默认 20）")
+
+    g = p.add_argument_group("后端与速率")
+    g.add_argument("--provider", choices=["google", "bing", "baidu"], default=None,
+                   help="固定单个后端；不指定则 google → bing → baidu 自动回退")
+    g.add_argument("--proxy", default="", help="代理地址（覆盖 .env 的 HTTPS_PROXY/HTTP_PROXY）")
+    g.add_argument("--min-interval", type=float, default=GOOGLE_MIN_INTERVAL,
+                   help="请求最小间隔秒数，避免触发限流（默认 %.1f，0 关闭）" % GOOGLE_MIN_INTERVAL)
+    g.add_argument("--balance", action="store_true",
+                   help="多后端轮转分摊请求（默认关闭；开启可分摊配额，但备用通道更慢/更易限流）")
+
+    g = p.add_argument_group("输出")
+    g.add_argument("--no-tts", action="store_true", help="不生成最终译文的语音")
+    g.add_argument("--no-file-log", action="store_true", help="不写文件日志")
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="多后端来回翻译 N 次链路工具")
     p.add_argument("text", nargs="?", default="Hello, World", help="待翻译文本（默认 Hello, World）")
-    p.add_argument("--mode", choices=["fixed", "random", "custom"], default="random",
-                   help="路线模式（默认 random）")
-    p.add_argument("--chain", choices=list(CHAINS), default="asia",
-                   help="fixed 模式使用哪套链（默认 asia）")
-    p.add_argument("--languages", default="", help="custom 模式的语言序列，逗号分隔")
-    p.add_argument("--provider", choices=["google", "bing", "baidu"], default=None,
-                   help="指定后端；不指定则 google → bing 自动回退")
-    p.add_argument("--steps", type=int, default=20, help="random 模式抽取语言数（默认 20）")
-    p.add_argument("--proxy", default="", help="代理地址（覆盖 .env 的 HTTPS_PROXY/HTTP_PROXY）")
-    p.add_argument("--min-interval", type=float, default=GOOGLE_MIN_INTERVAL,
-                   help="Google 请求最小间隔秒数，避免触发限流（默认 %.1f，0 关闭）" % GOOGLE_MIN_INTERVAL)
+    add_common_args(p, default_mode="random")
     p.add_argument("--reset", action="store_true", help="忽略旧状态，从头开始")
     p.add_argument("--dry-run", action="store_true", help="只显示路线，不翻译")
-    p.add_argument("--no-file-log", action="store_true", help="不写文件日志")
-    p.add_argument("--no-tts", action="store_true", help="不生成最终译文的语音")
     return p.parse_args(argv)
 
 
@@ -661,6 +736,7 @@ def build_cfg(args):
     return {
         "proxies": proxies,
         "min_interval": getattr(args, "min_interval", GOOGLE_MIN_INTERVAL),
+        "balance": getattr(args, "balance", False),
         "google_api_key": os.getenv("GOOGLE_API_KEY", ""),
         "bing_api_key": os.getenv("BING_API_KEY", ""),
         "bing_region": os.getenv("BING_REGION", ""),

@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.1.1`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.2.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -35,8 +35,8 @@ python -m venv .venv
 # 3) 获取数据（生成 data/，详见「数据来源 → 获取方式」）
 .venv\Scripts\python scripts\sync_from_site.py
 
-# 4) 翻译（例：模板角色 10000021 的全部故事）
-.venv\Scripts\python scripts\translate_stories.py 10000021 --all
+# 4) 翻译（例：模板角色 10000021 的全部含内容故事；也支持范围 10000002-10000030）
+.venv\Scripts\python scripts\translate_stories.py 10000021
 
 # 5) 可选：配置翻译后端密钥与代理
 copy .env.example .env
@@ -308,6 +308,7 @@ title: "角色详细"
 | `--steps` | `random` 模式抽取语言数，默认 `20` |
 | `--proxy` | 代理地址（覆盖 `.env` 的 `HTTPS_PROXY`/`HTTP_PROXY`） |
 | `--min-interval` | Google 请求最小间隔秒数，避免触发限流（默认 `0.3`，`0` 关闭） |
+| `--balance` | 多后端轮转分摊请求（默认关闭，见「通道分流」） |
 | `--reset` | 忽略旧进度，从头开始 |
 | `--dry-run` | 只显示路线，不执行翻译 |
 | `--no-file-log` | 不写文件日志 |
@@ -316,6 +317,8 @@ title: "角色详细"
 行为说明：
 
 - 流程：`langdetect` 判语言（固定 seed，可复现）→ 非英文先译成英文（不计入 N）→ 按路线翻译 N 次 → 译回中文
+- **长文本自动分块**：单次请求上限 `1500` 字（`MAX_CHARS_PER_REQUEST`），超长按句末标点切成多块翻译后拼接 —— 避免 Google 免费端点对超长文本返回 400
+- **通道分流**（`--balance`）：多后端轮转分摊请求，可把 Google 的每日配额分摊到 Bing；默认关闭（稳定优先，备用通道更慢/更易限流）
 - 后端与密钥（写进 `.env`，见 `.env.example`）：三个后端都是「**优先官方 API，无 key 回退免费通道**」
   - `google`：配 `GOOGLE_API_KEY` → 走 Cloud Translation v2（稳定、有配额、支持长文本）；未配则走 `clients5.google.com` 的 `dict-chrome-ex` 免 key 端点，失败再回退 deep-translator 的 `GoogleTranslator`
   - `bing`：配 `BING_API_KEY`（+ `BING_REGION`）→ 走 Azure 官方接口；未配则走 Bing 网页免 key 通道（`cn.bing.com` / `www.bing.com` 多域名轮换，可用 `BING_WEB_BASE` 指定）
@@ -339,21 +342,31 @@ title: "角色详细"
 | `baidu`（官方） | **QPS=1** | `1.1`（内置下限，调不低） | 官方标准版限速，代码已内置 |
 
 > 实测同批 `10000021/amber_journal`（5 份）：`--min-interval 0.3` ≈ **59s**，`1.0` ≈ **110s**，两者均**零限流**。
+> 并发实测：同批 `--workers 4 --min-interval 0.25` ≈ **34s**（≈1.7×，总速率约 **4 请求/秒**）。
+> 全量估算（现有 `data/`：13,646 份结果 / 约 30 万次调用）：单线程 ≈ 45 h；`--workers 4 --min-interval 0.25` ≈ **21 h**。
 
 ### `scripts/translate_stories.py`
 
 对某角色的故事（`zh.md`）跑翻译链，结果写入 `{id}/result/{story}/`（分段 + 全文，含语音）。
 
 ```bash
-# 默认：10000021 的 amber_journal，fixed/asia（20 次）
+# 单个角色（默认处理其全部含内容故事）
 .venv\Scripts\python scripts\translate_stories.py 10000021
 
-# 指定多个故事 / 全部含内容的故事
+# 只处理指定故事
 .venv\Scripts\python scripts\translate_stories.py 10000021 --stories amber_journal,vision
-.venv\Scripts\python scripts\translate_stories.py 10000021 --all
 
-# 全部角色（读 data/character.json 遍历所有 id）的所有含内容故事
-.venv\Scripts\python scripts\translate_stories.py --all-characters --all
+# 按 id 范围（含两端；不在 character.json 中的 id 自动跳过并提示）
+.venv\Scripts\python scripts\translate_stories.py 10000002-10000030
+
+# 组合：多个 id / 多段范围
+.venv\Scripts\python scripts\translate_stories.py 10000021,10000025-10000030 --stories vision
+
+# 全部角色
+.venv\Scripts\python scripts\translate_stories.py --all-characters
+
+# 并发提速（约 4 请求/秒；配合 --min-interval 控制速率）
+.venv\Scripts\python scripts\translate_stories.py --all-characters --workers 4 --min-interval 0.25
 
 # 覆盖已有结果、关闭语音
 .venv\Scripts\python scripts\translate_stories.py 10000021 --overwrite --no-tts
@@ -361,22 +374,26 @@ title: "角色详细"
 
 | 参数 | 说明 |
 | --- | --- |
-| `char_id`（位置参数） | 角色 id；配合 `--all-characters` 时可省略 |
-| `--all-characters` | 处理 `data/character.json` 中的**所有角色** |
-| `--stories` | 故事文件夹名，逗号分隔（默认 `amber_journal`） |
-| `--all` | 处理该角色所有含 zh 内容的故事 |
+| `char_ids`（位置参数） | 角色 id / 范围：`10000021`、`10000002-10000030`、`10000021,10000025-10000030`（空格或逗号分隔） |
+| `--all-characters` | 处理 `data/character.json` 中的**全部角色**（与 `char_ids` 互斥） |
+| `--stories` | 只处理指定故事文件夹，逗号分隔（**不指定 = 处理全部含内容故事**） |
+| `--all` | 显式处理全部含内容故事（即默认行为） |
 | `--mode` / `--chain` / `--languages` / `--steps` | 同 `translate_chain.py`（默认 `fixed` + `asia`） |
 | `--provider` / `--proxy` | 同 `translate_chain.py` |
 | `--min-interval` | 同 `translate_chain.py`（Google 请求最小间隔，默认 `0.3`） |
+| `--workers` | 并发线程数（默认 `1`；建议 `3~4`，配合 `--min-interval` 控制总速率） |
+| `--balance` | 同 `translate_chain.py`（多后端轮转分摊，默认关闭） |
 | `--overwrite` | 已有结果也重跑（默认跳过） |
 | `--reset` | 忽略旧批量状态 |
 | `--no-tts` / `--no-file-log` | 同上 |
 
 行为说明：
 
+- **角色选择**：位置参数支持单个 id / `起始-结束` 范围 / 逗号组合；按 `character.json` 顺序处理，范围内不存在的 id 自动跳过并提示
+- **故事选择**：不指定 `--stories` 时，默认处理该角色的**全部含内容故事**
 - 分段：按 `zh.md` 正文段落（去 frontmatter）；每段独立跑完整链路
 - 全文：整篇再独立跑一遍完整链路
-- **全部角色**（`--all-characters`）：按 `data/character.json` 顺序逐个角色处理，进度用「角色」总进度条；配合 `--all` 即**翻译全部角色的全部故事**
+- **全部角色**（`--all-characters`）：处理 `data/character.json` 中的全部角色，进度用「角色」总进度条
 - 输出：`result/{story}/full.json|mp3`、`seg_NN.json|mp3`、`segments.json`（汇总：段号/源文/语言/最终结果/文件名）
 - 每份 json = 链路结果（源文/检出语言/语言路线/逐步/最终译文）+ `story` / `segment_index` / `source_file`
 - 续跑：`.translate_stories_state.json`（批量级进度，参数一致才续；键为 `id|story|key`）；已有结果默认跳过
@@ -417,6 +434,15 @@ title: "角色详细"
 - 发布即打标签：`git tag -a vX.Y.Z -m "..."`（`v` 仅为标签约定，版本号本身遵循 SemVer）。
 
 ### 变更记录
+
+#### 0.2.0（2026-10-09）
+
+- **新增**：`translate_stories.py` 支持按 **id / 范围** 选角色（`10000002-10000030`、`10000021,10000025-10000030`）
+- **新增**：`--workers N` 并发翻译（实测同批 59.3s → 34.2s，约 1.7×）
+- **新增**：`--balance` 多后端轮转分摊请求（默认关闭）
+- **修复**：超长文本按 ≤1500 字自动分块 —— 此前长故事在 Google 免费端点报 400，会重试 5 次后 `Paused` **中断整轮**
+- **修复**：`langdetect` 并发下抛 `Need to load profiles`（改为首次加锁预热）
+- **变更**：CLI 统一（两脚本共用参数分组）；`--stories` 不指定时默认处理**全部含内容故事**（原默认 `amber_journal`）
 
 #### 0.1.1（2026-10-09）
 
