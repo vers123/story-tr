@@ -2,6 +2,12 @@
 
 版本号遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)；递增规则与「初始开发阶段（`0.y.z`）」说明见 [README · 版本与变更](README.md#版本与变更)。
 
+## 0.11.2（2026-10-09）
+
+- **修复**：GUI「最小间隔」用的是**整数** `QSpinBox` 且默认 `0` —— 既填不出推荐的 `0.3`，又把 CLI 默认的 `0.3` 覆盖成「关闭节流」（易触发 429）。现改为 `QDoubleSpinBox`（步长 `0.1`、默认取 `DEFAULT_MIN_INTERVAL`），并加回归测试锁定「GUI 默认 == CLI 默认」
+- **新增**：GUI 各控件补充**推荐值提示**（`setToolTip`），覆盖模式/链、后端、并发线程、最小间隔、只出全文/段落、重跑、语音、明细
+- **文档**：README 的 GUI 一节新增「推荐取值」表
+
 ## 0.11.1（2026-10-09）
 
 - **工程**：CI 新增 **`gui` job** —— 只在最新的 Python（**3.13**）上安装 `[dev,gui]`，并以 `QT_QPA_PLATFORM=offscreen` **离屏运行** GUI 测试（PySide6 约 200MB，不铺满矩阵）；顺带装上 Qt 离屏所需的系统库（`libegl1` / `libxkbcommon0` / `libdbus-1-3` / `libfontconfig1`）

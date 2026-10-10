@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -134,18 +135,30 @@ class TranslateTab(_TaskTab):
         self.story_filter.setPlaceholderText("留空＝该角色全部含内容故事")
         self.mode = QComboBox()
         self.mode.addItems(MODES)
+        self.mode.setToolTip("推荐 fixed：同一批结果可复现、可断点续跑；random 每份独立随机且自动关批量。")
         self.chain = QComboBox()
         self.chain.addItems(["asia", "eu", "amer", "sea"])
+        self.chain.setToolTip("推荐 asia（默认）。仅 fixed 模式生效。")
         self.custom_langs = QLineEdit()
         self.custom_langs.setPlaceholderText("custom 模式：en,ja,ko,…")
         self.provider = QComboBox()
         self.provider.addItems(PROVIDERS)
+        self.provider.setToolTip("推荐「自动」：google → bing → baidu 依次回退，最稳；"
+                                 "本机长期连不上 google 时可固定 bing/baidu，省去超时等待。")
         self.workers = QSpinBox()
         self.workers.setRange(1, 8)
-        self.min_interval = QSpinBox()
-        self.min_interval.setRange(0, 20)
-        self.min_interval.setSingleStep(1)
-        self.min_interval.setValue(0)
+        self.workers.setValue(1)
+        self.workers.setToolTip("并发线程数。推荐 1（最稳）；想快可 3~4，"
+                                "但更易触发限流 —— 限流时会退避等待，不一定更快。")
+        self.min_interval = QDoubleSpinBox()
+        self.min_interval.setRange(0.0, 20.0)
+        self.min_interval.setSingleStep(0.1)
+        self.min_interval.setDecimals(1)
+        self.min_interval.setValue(gargv.DEFAULT_MIN_INTERVAL)
+        self.min_interval.setSuffix(" 秒")
+        self.min_interval.setToolTip("请求最小间隔。推荐 %.1f（与 CLI 默认一致）；0＝关闭节流（易被限流）。"
+                                     "百度官方通道另有 1.1 秒下限，无法通过此项调低。"
+                                     % gargv.DEFAULT_MIN_INTERVAL)
         form.addRow("角色 id / 范围", self.char_ids)
         form.addRow("", self.all_chars)
         form.addRow("故事（--stories）", self.story_filter)
@@ -153,13 +166,18 @@ class TranslateTab(_TaskTab):
         form.addRow("自定义语言", self.custom_langs)
         form.addRow("后端", self.provider)
         form.addRow("并发线程", self.workers)
-        form.addRow("最小间隔（秒）", self.min_interval)
+        form.addRow("最小间隔", self.min_interval)
 
         self.full_only = QCheckBox("只出全文（--full-only）")
+        self.full_only.setToolTip("批量开启时只省约 20% 请求，主要价值是减少产物文件与磁盘占用。")
         self.segments_only = QCheckBox("只出段落（--segments-only）")
         self.overwrite = QCheckBox("已有结果也重跑（--overwrite）")
+        self.overwrite.setToolTip("默认跳过已有结果（可断点续跑）；仅在需要重跑时才勾选。")
         self.no_tts = QCheckBox("不生成语音（--no-tts）")
+        self.no_tts.setToolTip("推荐首次跑全量时勾选：省去每份结果的 gTTS 请求与 mp3 体积，之后可单独补跑。")
         self.verbose = QCheckBox("控制台/日志显示每步明细（--verbose）")
+        self.verbose.setToolTip("默认只显示分组行 + 每份结果一行；"
+                                "勾选后追加每次翻译步骤的中间结果（量很大）。")
         opts = QGroupBox("选项")
         o = QVBoxLayout(opts)
         for w in (self.full_only, self.segments_only, self.overwrite, self.no_tts, self.verbose):

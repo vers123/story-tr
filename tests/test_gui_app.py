@@ -45,6 +45,20 @@ def test_translate_tab_builds_core_job(qapp):
     assert hooks is True  # 需要 on_progress / cancel
 
 
+def test_translate_tab_defaults_match_cli(qapp):
+    """默认必须与 CLI 对齐：曾经是整数框且默认 0，会静默关掉节流（CLI 默认 0.3）。"""
+    from story_tr.gui import argv as gargv
+
+    tab = gapp.TranslateTab()
+    assert tab.min_interval.value() == pytest.approx(gargv.DEFAULT_MIN_INTERVAL)
+    assert tab.workers.value() == 1
+    assert tab.all_chars.isChecked() is True
+    _, argv_list, _ = tab.build_job()
+    assert argv_list[argv_list.index("--min-interval") + 1] == str(gargv.DEFAULT_MIN_INTERVAL)
+    assert argv_list[argv_list.index("--mode") + 1] == "fixed"
+    assert "--full-only" not in argv_list and "--overwrite" not in argv_list
+
+
 def test_fetch_tab_maps_mode(qapp):
     tab = gapp.FetchTab()
     tab.mode.setCurrentIndex(1)
