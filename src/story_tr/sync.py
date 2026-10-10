@@ -11,6 +11,7 @@
 """
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -19,7 +20,7 @@ import requests
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_incrementing
 from tqdm import tqdm
 
-from . import paths
+from . import paths, report
 
 ROOT = paths.home()
 BASE = os.path.join(ROOT, "data")
@@ -30,6 +31,7 @@ API = "https://gi.yatta.moe/api/v2/{loc}/{kind}/{cid}"
 LIST_API = "https://gi.yatta.moe/api/v2/{loc}/avatar"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 LOCS = ("en", "chs")
+log = logging.getLogger("translate_chain")
 
 
 def slug(s):
@@ -72,7 +74,7 @@ def get_url(url, label, tries=4):
                 r.raise_for_status()
                 return r.json().get("data")
     except Exception as e:  # noqa: BLE001
-        print("  ! %s 失败: %s" % (label, e))
+        log.warning("  ! %s 失败: %s", label, e)
         return None
 
 
@@ -172,7 +174,7 @@ def fetch_all(chars, mode="incremental"):
     else:
         todo = [cid for cid in ids if not ok(recs.get(cid))]
     print("待抓取：%d / %d" % (len(todo), len(ids)))
-    for n, cid in enumerate(tqdm(todo, desc="抓取", unit="角色", dynamic_ncols=True), 1):
+    for n, cid in enumerate(tqdm(todo, desc="抓取", unit="角色", **report.bar_kwargs()), 1):
         rec = recs.get(cid) or {"id": cid}
         for loc in LOCS:
             rec.setdefault(loc, {})
@@ -206,6 +208,9 @@ def fetch_all(chars, mode="incremental"):
                                      for k in sorted(st, key=lambda x: int(x))]
             time.sleep(0.15)
         recs[cid] = rec
+        log.info("[%s] 已抓取  en %d 故事 / chs %d 故事", cid,
+                 len((rec.get("en") or {}).get("story") or []),
+                 len((rec.get("chs") or {}).get("story") or []))
         if n % 20 == 0 or n == len(todo):
             dump(CACHE, [recs[i] for i in ids if i in recs])
 
@@ -233,16 +238,16 @@ def fetch_all(chars, mode="incremental"):
     return recs, info
 
 
-def build(chars, recs, only=None, report=None):
+def build(chars, recs, only=None, info=None):
     """生成各角色文件并重写 data/character.json。
 
     only：只重写这些角色的文件（None = 全部）；character.json 索引始终完整重写。
-    report：--update 的报告容器（记录自动追加的故事等）。
+    info：--update 的报告容器（记录自动追加的故事等）。
     """
-    report = report if report is not None else {}
-    report.setdefault("added_stories", [])
+    info = info if info is not None else {}
+    info.setdefault("added_stories", [])
     problems, name_diffs, written, empty_chars, new_index = [], [], 0, [], []
-    for c in tqdm(chars, desc="生成", unit="角色", dynamic_ncols=True):
+    for c in tqdm(chars, desc="生成", unit="角色", **report.bar_kwargs()):
         cid = c["id"]
         entry = {"id": cid, "name_en": c.get("name_en"), "name_zh": c.get("name_zh"),
                  "path": c.get("path"), "stories": c.get("stories")}
@@ -271,7 +276,7 @@ def build(chars, recs, only=None, report=None):
             stories.extend(added)
             c["stories"] = stories
             entry["stories"] = stories
-            report["added_stories"].append("%s：+%s" % (cid, ", ".join(added)))
+            info["added_stories"].append("%s：+%s" % (cid, ", ".join(added)))
         if sorted(en_folders) != sorted(stories):
             problems.append("%s: slug 与 stories 不一致 | slug=%s | stories=%s" % (cid, en_folders, stories))
 
@@ -365,6 +370,7 @@ def add_parser(sub):
                         "只重写变化项并更新 character.json")
     g.add_argument("--refresh", action="store_true",
                    help="忽略缓存 data/_fetch_all.json，强制重新抓取并重写全部角色")
+    report.add_verbosity_args(p)
     p.set_defaults(func=main)
     return p
 
@@ -391,6 +397,7 @@ def print_report(info):
 
 
 def main(args) -> int:
+    report.setup_console(report.console_level(args))
     mode = "refresh" if args.refresh else ("update" if args.update else "incremental")
     if os.path.exists(CHAR_FILE):
         with open(CHAR_FILE, encoding="utf-8") as f:
@@ -410,7 +417,7 @@ def main(args) -> int:
     only = None  # --update 只重写「新增 / 变化 / 首次建指纹」的角色，其余仅保留索引
     if mode == "update":
         only = set(info["discovered"]) | set(info["changed"]) | set(info["first"])
-    build(chars, recs, only=only, report=info)
+    build(chars, recs, only=only, info=info)
 
     if mode == "update":
         print()

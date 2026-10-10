@@ -36,7 +36,6 @@ import logging
 import os
 import random
 import re
-import sys
 import threading
 import time
 from datetime import datetime
@@ -53,7 +52,7 @@ from tenacity import (
 )
 from tqdm import tqdm
 
-from . import paths
+from . import paths, report
 
 ROOT = paths.home()
 STATE_PATH = os.path.join(ROOT, ".translate_state.json")
@@ -689,7 +688,8 @@ def translate_step(text: str, src_code: str, tgt_code: str, providers, cfg, log)
     """返回 (provider, 结果文本)。规则见 `_step_loop`。"""
     provider, out = _translate_with_providers(
         providers, cfg, log, lambda p: translate_once(p, text, src_code, tgt_code, cfg))
-    log.info("  [%s] %s → %s：%s", provider, lang_label(src_code), lang_label(tgt_code), out)
+    log.log(report.STEP, "  [%s] %s → %s：%s", provider, lang_label(src_code),
+            lang_label(tgt_code), out)
     return provider, out
 
 
@@ -704,8 +704,8 @@ def translate_step_many(texts, src_code: str, tgt_code: str, providers, cfg, log
         return provider, [out]
     provider, outs = _translate_with_providers(
         providers, cfg, log, lambda p: translate_many(p, texts, src_code, tgt_code, cfg))
-    log.info("  [%s] %s → %s：%d 条（批量）", provider, lang_label(src_code),
-             lang_label(tgt_code), len(texts))
+    log.log(report.STEP, "  [%s] %s → %s：%d 条（批量）", provider, lang_label(src_code),
+            lang_label(tgt_code), len(texts))
     return provider, outs
 
 
@@ -774,14 +774,9 @@ def clear_state():
 # --------------------------------------------------------------------------- #
 # 日志
 # --------------------------------------------------------------------------- #
-def setup_logging(no_file_log: bool):
-    log = logging.getLogger("translate_chain")
-    log.setLevel(logging.DEBUG)
-    log.handlers.clear()
-    console = logging.StreamHandler(sys.stdout)
-    console.setLevel(logging.INFO)
-    console.setFormatter(logging.Formatter("%(message)s"))
-    log.addHandler(console)
+def setup_logging(no_file_log: bool, console_level: int = logging.INFO):
+    """控制台 handler 走 `report.TqdmHandler`（日志上滚、进度条固定底部）；文件日志记全量。"""
+    log = report.setup_console(console_level)
 
     logfile = None
     if not no_file_log:
@@ -819,6 +814,7 @@ def add_common_args(p, default_mode="random"):
     g = p.add_argument_group("输出")
     g.add_argument("--no-tts", action="store_true", help="不生成最终译文的语音")
     g.add_argument("--no-file-log", action="store_true", help="不写文件日志")
+    report.add_verbosity_args(g)
 
 
 def add_parser(sub):
@@ -850,11 +846,7 @@ def build_cfg(args):
 
 
 def main(args) -> int:
-    log, logfile = setup_logging(args.no_file_log)
-    # 控制台只保留告警，避免与 tqdm 进度条混排（明细仍进文件日志）
-    for h in log.handlers:
-        if type(h) is logging.StreamHandler:
-            h.setLevel(logging.WARNING)
+    log, logfile = setup_logging(args.no_file_log, report.console_level(args, show_steps=True))
     cfg = build_cfg(args)
 
     text = args.text
@@ -912,12 +904,12 @@ def main(args) -> int:
 
     try:
         with tqdm(total=len(tasks), initial=next_index, desc="翻译链", unit="步",
-                  dynamic_ncols=True) as bar:
+                  **report.bar_kwargs()) as bar:
             for idx in range(next_index, len(tasks)):
                 task = tasks[idx]
                 bar.set_description("翻译链 %s→%s" % (task["src"], task["tgt"]))
-                log.info("[%d/%d] %s → %s", idx + 1, len(tasks),
-                         lang_label(task["src"]), lang_label(task["tgt"]))
+                log.log(report.STEP, "[%d/%d] %s → %s", idx + 1, len(tasks),
+                        lang_label(task["src"]), lang_label(task["tgt"]))
                 provider, out = translate_step(cur_text, task["src"], task["tgt"], providers, cfg, log)
                 cur_text = out
                 steps.append({"index": idx, "kind": task["kind"], "lang": task["lang"],

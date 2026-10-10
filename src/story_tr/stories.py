@@ -16,17 +16,17 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from tqdm import tqdm
 
 from . import chain as tc
-from . import paths
+from . import paths, report
 
 ROOT = paths.home()
 STORY_ROOT = os.path.join(ROOT, "data", "story", "character")
@@ -347,6 +347,18 @@ def build_tasks(base, char_id, stories, log, parts="both"):
     return tasks
 
 
+def providers_of(result) -> str:
+    """结果各步实际用到的后端（去重保序；超过 2 个则省略）。"""
+    seen = []
+    for s in result.get("steps") or []:
+        p = s.get("provider")
+        if p and p not in seen:
+            seen.append(p)
+    if not seen:
+        return "-"
+    return "/".join(seen) if len(seen) <= 2 else "%s/…" % seen[0]
+
+
 def main(args) -> int:
     if args.char_ids and args.all_characters:
         print("不能同时指定角色 id 与 --all-characters，请二选一。")
@@ -356,11 +368,7 @@ def main(args) -> int:
               "或用 --all-characters 处理全部角色。")
         return 1
 
-    log, logfile = tc.setup_logging(args.no_file_log)
-    # 控制台只保留告警，避免与 tqdm 进度条混排（明细仍进文件日志）
-    for h in log.handlers:
-        if type(h) is logging.StreamHandler:
-            h.setLevel(logging.WARNING)
+    log, logfile = tc.setup_logging(args.no_file_log, report.console_level(args))
     cfg = tc.build_cfg(args)
     providers = [args.provider] if args.provider else ["google", "bing", "baidu"]
     provider_label = providers[0] if len(providers) == 1 else " → ".join(providers)
@@ -384,7 +392,7 @@ def main(args) -> int:
 
     processed = 0
     outer = tqdm(char_ids, desc="角色", unit="个", position=0,
-                 disable=len(char_ids) <= 1, dynamic_ncols=True)
+                 **report.bar_kwargs(len(char_ids) <= 1))
     try:
         with outer:
             for char_id in outer:
@@ -395,12 +403,8 @@ def main(args) -> int:
                     log.warning("跳过 %s：没有可处理的故事", char_id)
                     continue
 
-                line = "角色 %s，故事 %s，共 %d 份结果（%s）" % (
-                    char_id, ",".join(stories), len(tasks), mode_label)
-                if len(char_ids) > 1:
-                    tqdm.write(line)
-                else:
-                    print(line)
+                log.info("角色 %s，故事 %s，共 %d 份结果（%s）",
+                         char_id, ",".join(stories), len(tasks), mode_label)
 
                 done_stories = set()
                 stats = {"n": 0}
@@ -420,10 +424,12 @@ def main(args) -> int:
                                                    or state_key in completed):
                             done_stories.add(task["story"])
                             stats["n"] += 1
+                            log.log(report.STEP, "  跳过（已有结果）%s/%s",
+                                    task["story"], task["key"])
                             return True
                     return False
 
-                def _save(task, json_path, mp3_path, result):
+                def _save(task, json_path, mp3_path, result, elapsed=None):
                     with open(json_path, "w", encoding="utf-8") as f:
                         json.dump(result, f, ensure_ascii=False, indent=2)
                     if not args.no_tts:
@@ -441,6 +447,12 @@ def main(args) -> int:
                         save_state(state)
                         done_stories.add(task["story"])
                         stats["n"] += 1
+                    # 每份结果完成一行（--verbose 之外也可见）
+                    cols = ["[%s]" % char_id, "%s/%s" % (task["story"], task["key"]),
+                            "%d 字" % len(result.get("final") or ""), providers_of(result)]
+                    if elapsed is not None:
+                        cols.append("%.1fs" % elapsed)
+                    log.info("  ".join(cols))
 
                 def _process_unit(unit):
                     """处理一组任务（可被多线程并发调用；共享状态加锁），返回该组任务数。"""
@@ -450,28 +462,35 @@ def main(args) -> int:
                         os.makedirs(d, exist_ok=True)
                         if not _skip_it(t, json_path):
                             todo.append((t, json_path, mp3_path))
-                    if todo:
-                        languages, chain_label = tc.resolve_languages(args)
-                        extras = [{"story": t["story"], "segment_index": t["index"],
-                                   "source_file": rel(os.path.join(base, t["story"], "zh.md")),
-                                   "mode": args.mode, "chain": chain_label}
-                                  for t, _, _ in todo]
-                        log.info(">>> %s：%d 条（%s）：%s", char_id, len(todo),
+                    if not todo:
+                        return len(unit)
+                    languages, chain_label = tc.resolve_languages(args)
+                    extras = [{"story": t["story"], "segment_index": t["index"],
+                               "source_file": rel(os.path.join(base, t["story"], "zh.md")),
+                               "mode": args.mode, "chain": chain_label}
+                              for t, _, _ in todo]
+                    n = len(todo)
+                    if n > 1:  # 批量组：开始/结束各一行，耗时记在组上
+                        log.info(">>> %s：%d 条（%s）：%s", char_id, n,
                                  ",".join(sorted({t["story"] for t, _, _ in todo})),
                                  " → ".join(languages))
-                        if len(todo) > 1:
-                            results = run_chain_many([t["text"] for t, _, _ in todo],
-                                                     languages, providers, cfg, log, extras)
-                        else:
-                            results = [run_chain(t["text"], languages, providers, cfg, log,
-                                                 extras[0]) for t, _, _ in todo]
-                        for (t, json_path, mp3_path), res in zip(todo, results):
-                            _save(t, json_path, mp3_path, res)
+                    t0 = time.monotonic()
+                    if n > 1:
+                        results = run_chain_many([t["text"] for t, _, _ in todo],
+                                                 languages, providers, cfg, log, extras)
+                    else:
+                        results = [run_chain(t["text"], languages, providers, cfg, log,
+                                             extras[0]) for t, _, _ in todo]
+                    dt = time.monotonic() - t0
+                    for (t, json_path, mp3_path), res in zip(todo, results):
+                        _save(t, json_path, mp3_path, res, dt if n == 1 else None)
+                    if n > 1:
+                        log.info("<<< %s：%d 条完成，%.1fs", char_id, n, dt)
                     return len(unit)
 
                 bar = tqdm(total=len(tasks), desc="翻译链", unit="份",
                            position=1 if len(char_ids) > 1 else 0,
-                           leave=len(char_ids) <= 1, dynamic_ncols=True)
+                           leave=True, **report.bar_kwargs())
                 try:
                     if args.workers > 1:
                         with ThreadPoolExecutor(max_workers=args.workers) as ex:

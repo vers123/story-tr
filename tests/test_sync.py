@@ -67,7 +67,7 @@ def test_build_writes_one_index_entry_per_character(tmp_path, monkeypatch):
            "chs": {"avatar": {"name": "安柏"},
                    "story": [{"i": 0, "title": "详情", "title2": None,
                               "text": "a\\nb", "text2": ""}]}}
-    sync.build(chars, {"10000021": rec}, only=None, report={})
+    sync.build(chars, {"10000021": rec}, only=None, info={})
     data = json.loads((tmp_path / "character.json").read_text(encoding="utf-8"))
     assert len(data) == 1
     assert data[0]["stories"] == ["details"]
@@ -81,7 +81,7 @@ def test_build_only_keeps_index_for_skipped_character(tmp_path, monkeypatch):
     monkeypatch.setattr(sync, "STORY_ROOT", str(tmp_path / "story"))
     chars = [{"id": "10000021", "name_en": "Amber", "name_zh": "安柏",
               "path": "data/story/character/10000021", "stories": ["details"]}]
-    sync.build(chars, {"10000021": _rec()}, only=set(), report={})
+    sync.build(chars, {"10000021": _rec()}, only=set(), info={})
     data = json.loads((tmp_path / "character.json").read_text(encoding="utf-8"))
     assert len(data) == 1
     assert not (tmp_path / "story").exists()

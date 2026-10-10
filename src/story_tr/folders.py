@@ -12,33 +12,37 @@
    若两侧数量不一致则跳过并告警。
 """
 import json
+import logging
 import os
 
 from tqdm import tqdm
 
-from . import paths
+from . import paths, report
 
 ROOT = paths.home()
 CHAR_JSON = os.path.join(ROOT, "data", "character.json")
 FIXED = ["character_details"] + ["character_story_%d" % i for i in range(1, 6)]
+log = logging.getLogger("translate_chain")
 
 
 def add_parser(sub):
     """注册 `story-tr folders` 子命令。"""
     p = sub.add_parser("folders", help="按 character.json 的 stories 同步重命名故事文件夹",
                        parents=[paths.data_dir_parent()])
+    report.add_verbosity_args(p)
     p.set_defaults(func=main)
     return p
 
 
 def main(args) -> int:
+    report.setup_console(report.console_level(args))
     with open(CHAR_JSON, encoding="utf-8") as f:
         chars = json.load(f)
 
     renames = 0
     warnings = []
 
-    for c in tqdm(chars, desc="同步文件夹", unit="角色", dynamic_ncols=True):
+    for c in tqdm(chars, desc="同步文件夹", unit="角色", **report.bar_kwargs()):
         sid = c["id"]
         target = list(c.get("stories") or [])
         sdir = os.path.join(ROOT, "data", "story", "character", sid, "profile", "story")
@@ -74,7 +78,7 @@ def main(args) -> int:
                 continue
             os.rename(src, dst)
             renames += 1
-            tqdm.write("[%s] %s -> %s" % (sid, old, new))
+            log.info("[%s] %s -> %s", sid, old, new)
 
     print("\n重命名 %d 个文件夹。" % renames)
     if warnings:
