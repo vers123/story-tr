@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -38,6 +39,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSpinBox,
     QSplitter,
     QTabWidget,
@@ -111,14 +113,24 @@ def _as_bool(value) -> bool:
 # --------------------------------------------------------------------------- #
 # 页签基类
 # --------------------------------------------------------------------------- #
-class _TaskTab(QWidget):
-    """页签基类：负责「构造任务」与「展示进度」。
+class _TaskTab(QScrollArea):
+    """页签基类：负责「构造任务」与「展示进度」，内容**可滚动**。
+
+    自身即为 `QScrollArea` —— 屏幕缩放较大或窗口被压小时，内容超出就出现滚动条，
+    而不是把窗口最小高度顶到屏幕之外（Windows 会因此报 `Unable to set geometry`）。
 
     「开始 / 停止」按钮由窗口级工具条统一承载，页签只实现 `build_job()` 与进度展示。
+    子类把控件加进 `self.body_layout` 即可。
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        body = QWidget()
+        self.body_layout = QVBoxLayout(body)
+        self.setWidget(body)
         self.bar = QProgressBar()
         self.bar.setTextVisible(True)
         self.status = QLabel("就绪")
@@ -256,7 +268,7 @@ class TranslateTab(_TaskTab):
         b.addWidget(self._group("速率与后端", rate_form))
         b.addWidget(self.bar)
         b.addWidget(self.status)
-        lay = QVBoxLayout(self)
+        lay = self.body_layout
         lay.addWidget(box)
         lay.addStretch(1)
 
@@ -363,7 +375,7 @@ class FetchTab(_TaskTab):
         b.addWidget(self.verbose)
         b.addWidget(self.bar)
         b.addWidget(self.status)
-        lay = QVBoxLayout(self)
+        lay = self.body_layout
         lay.addWidget(box)
         lay.addStretch(1)
 
@@ -425,7 +437,7 @@ class CleanTab(_TaskTab):
         b.addWidget(row)
         b.addWidget(self.bar)
         b.addWidget(self.status)
-        lay = QVBoxLayout(self)
+        lay = self.body_layout
         lay.addWidget(box)
         lay.addWidget(QLabel("提示：预览与执行都会把输出写入下方日志面板。"
                              "「开始」按钮在本页不启用，请用上面的预览 / 执行。"))

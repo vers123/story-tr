@@ -162,6 +162,25 @@ def test_reset_rerun_adds_reset_flag(qapp):
     assert "--reset" not in plain
 
 
+def test_task_tabs_are_scrollable(qapp):
+    """回归：高缩放 / 小屏下窗口会被内容顶破（Windows 报 Unable to set geometry）。
+
+    三个任务页签自身是 QScrollArea，窗口因此可以缩到很小，内容超出时改为滚动。
+    """
+    from PySide6.QtWidgets import QScrollArea
+
+    win = gapp.MainWindow()
+    try:
+        for tab in (win.translate_tab, win.fetch_tab, win.clean_tab):
+            assert isinstance(tab, QScrollArea)
+            assert tab.widgetResizable() is True
+            assert tab.widget() is not None
+            assert tab.minimumSizeHint().height() <= 120  # 不再随表单行数增长
+        assert win.minimumSizeHint().height() < win.sizeHint().height()
+    finally:
+        win.close()
+
+
 def test_done_keeps_progress_and_offers_reset(qapp):
     """完成后进度条不清零；退出码 3 时出现「重置批次并重跑」。"""
     win = gapp.MainWindow()

@@ -2,6 +2,11 @@
 
 版本号遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)；递增规则与「初始开发阶段（`0.y.z`）」说明见 [README · 版本与变更](README.md#版本与变更)。
 
+## 0.13.1（2026-10-11）
+
+- **修复**：高显示缩放或小屏幕上，GUI 窗口被内容顶破 —— Windows 报 `QWindowsWindow::setGeometry: Unable to set geometry`，窗口最小高度超出屏幕可用高度，底部进度条 / 状态栏可能被挤出屏幕。翻译 / 抓取 / 清理三个页签改为**自身可滚动**（`QScrollArea`，`widgetResizable=True`），窗口最小高度由 **864 → 422 px**，内容超出时出现滚动条；结果浏览页本就是可伸缩的 `QSplitter`，无需包裹
+- **工程**：新增回归测试 `test_task_tabs_are_scrollable`（断言三个页签是 `QScrollArea` 且最小高度不再随表单行数增长）
+
 ## 0.13.0（2026-10-11）
 
 界面布局与交互重整（P0–P2），并修掉两个会导致任务直接失败的 GUI 缺陷。
