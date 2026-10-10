@@ -2,6 +2,11 @@
 
 版本号遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)；递增规则与「初始开发阶段（`0.y.z`）」说明见 [README · 版本与变更](README.md#版本与变更)。
 
+## 0.11.1（2026-10-09）
+
+- **工程**：CI 新增 **`gui` job** —— 只在最新的 Python（**3.13**）上安装 `[dev,gui]`，并以 `QT_QPA_PLATFORM=offscreen` **离屏运行** GUI 测试（PySide6 约 200MB，不铺满矩阵）；顺带装上 Qt 离屏所需的系统库（`libegl1` / `libxkbcommon0` / `libdbus-1-3` / `libfontconfig1`）
+- **文档**：开发与测试一节改为按 job 说明 CI 分层（`test` 跑 3.9/3.11/3.13，`gui` 跑 3.13）；目录结构里的 `ci.yml` 注释同步
+
 ## 0.11.0（2026-10-09）
 
 - **新增**：**PySide6 桌面界面**（可选依赖 `.[gui]`，命令 `story-tr-gui` / `python -m story_tr.gui`）
@@ -13,7 +18,7 @@
 - **新增**：核心可复用接口 —— `stories.main(args, on_progress, cancel)`、`sync.main(...)`、`sync.fetch_all(..., on_progress, cancel)`；新增 `chain.Cancelled`（退出码 `6`）
 - **变更**：`report.setup_console` 只清理**自己管理的** handler（控制台 / 文件），保留外部 handler（GUI 日志面板）
 - **变更**：`translate` 的收尾与异常提示由 `print` 改为日志（控制台输出不变，GUI 日志面板也能看到）
-- **工程**：新增 GUI 测试（`test_gui_argv.py` 不依赖 PySide6；`test_gui_app.py` 离屏构造窗口，未装 PySide6 时自动跳过，故 CI 无需安装 GUI 依赖）
+- **工程**：新增 GUI 测试（`test_gui_argv.py` 不依赖 PySide6；`test_gui_app.py` 离屏构造窗口，未装 PySide6 时自动跳过 —— CI 覆盖见 0.11.1）
 
 ## 0.10.0（2026-10-09）
 

@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.11.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.11.1`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -225,7 +225,7 @@ story-tr fetch --refresh
 │   └── translate_stories.py            # = story-tr translate
 ├── docs/mcp.md                         # MCP 详细文档（客户端配置 / 分发 / Tools·Resources）
 ├── tests/                              # pytest 单元测试
-├── .github/workflows/ci.yml            # CI：ruff + pytest（3.9 / 3.11 / 3.13）
+├── .github/workflows/ci.yml            # CI：test（ruff + pytest，3.9/3.11/3.13）+ gui（3.13，离屏）
 ├── logs/                               # 运行日志 + MCP 子进程日志 logs/mcp_*.log（不入库）
 ├── out/                                # translate_chain 的结果 json/mp3（不入库）
 ├── dist/ / build/                      # python -m build 的产物 *.whl / *.tar.gz（不入库）
@@ -640,7 +640,8 @@ story-tr-gui                 # 等价：python -m story_tr.gui
 
 > 选型原则：优先 **MIT / BSD / Apache-2.0** 等宽松许可。**未采用 GPL / LGPL 的库**（例如 `edge-tts` 为 GPLv3 / LGPLv3，与 MIT 项目不兼容），以免引入传染性义务。
 
-> 开发与测试：`pip install -e ".[dev,mcp]"` → `ruff check .` + `pytest`（MCP 测试在未装 mcp 的版本自动跳过；CI 见 `.github/workflows/ci.yml`）。
+> 开发与测试：`pip install -e ".[dev,mcp,gui]"` → `ruff check .` + `pytest`。测试按依赖**自动分层跳过** —— 未装 `mcp` / `PySide6` 时相关用例自动跳过，因此基础测试在任意环境都能跑。
+> CI（`.github/workflows/ci.yml`）：`test` job 在 Python 3.9 / 3.11 / 3.13 上装 `[dev,mcp]` 跑 ruff + pytest；`gui` job 只在 **3.13** 上装 `[dev,gui]`，并以 `QT_QPA_PLATFORM=offscreen` 离屏跑 GUI 测试（PySide6 约 200MB，不铺满矩阵）。
 
 ## 版本与变更
 
