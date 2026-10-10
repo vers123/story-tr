@@ -43,3 +43,29 @@ def test_missing_signature_after_clean_keeps_completed():
     assert err is None
     assert completed == {"10000103|vision|full"}
     assert state["signature"] == SIG_A
+
+
+def test_mismatch_error_is_human_readable():
+    """回归：报错不再直接甩原始 JSON，而是指出变化的那几项。"""
+    old = {"signature": {"characters": ["10000021"], "stories": "ALL", "mode": "fixed",
+                         "parts": "full"},
+           "completed": []}
+    cur = {"characters": ["10000021"], "stories": "ALL", "mode": "random",
+           "parts": "segments"}
+    _, _, err = stories.prepare_state(old, cur, False)
+    assert "模式：上次 fixed → 本次 random" in err
+    assert "输出内容：上次 full → 本次 segments" in err
+    assert "角色范围" not in err  # 未变化的项不出现在差异里
+
+
+def test_describe_signature_diff_lists_only_changes():
+    prev = {"characters": ["1"], "mode": "fixed", "chain": "asia"}
+    cur = {"characters": ["1"], "mode": "fixed", "chain": "eu"}
+    text = stories.describe_signature_diff(prev, cur)
+    assert "链：上次 asia → 本次 eu" in text
+    assert "模式" not in text
+
+
+def test_describe_signature_diff_empty_when_same():
+    sig = {"mode": "fixed", "characters": ["1"]}
+    assert "无可比较" in stories.describe_signature_diff(sig, dict(sig))

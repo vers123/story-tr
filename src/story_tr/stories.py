@@ -295,6 +295,40 @@ def signature(args, char_ids):
     return sig
 
 
+_SIG_LABELS = (
+    ("characters", "角色范围"),
+    ("stories", "故事"),
+    ("mode", "模式"),
+    ("chain", "链"),
+    ("steps", "随机步数"),
+    ("languages", "自定义语言"),
+    ("provider", "后端"),
+    ("parts", "输出内容"),
+)
+
+
+def _human_sig(value):
+    """把签名里的单个值渲染成人看的短字符串。"""
+    if value in (None, ""):
+        return "—"
+    if isinstance(value, list):
+        if len(value) > 6:
+            return "%s…（共 %d 项）" % (",".join(str(x) for x in value[:6]), len(value))
+        return ",".join(str(x) for x in value)
+    return str(value)
+
+
+def describe_signature_diff(prev, cur) -> str:
+    """把两次批量签名的差异写成人话（只列发生变化的项）。"""
+    lines = []
+    for key, label in _SIG_LABELS:
+        before, after = prev.get(key, "<无>"), cur.get(key, "<无>")
+        if before != after:
+            lines.append("  · %s：上次 %s → 本次 %s"
+                         % (label, _human_sig(before), _human_sig(after)))
+    return "\n".join(lines) or "  （无可比较的差异）"
+
+
 def prepare_state(state, sig, reset):
     """校验/初始化批量状态，返回 (state, completed, error)。
 
@@ -304,10 +338,11 @@ def prepare_state(state, sig, reset):
     """
     prev = (state or {}).get("signature")
     if state and not reset and prev and prev != sig:
-        return None, None, ("参数与上次批量任务不一致，请加 --reset 后重跑。\n"
-                            "  上次：%s\n  本次：%s"
-                            % (json.dumps(prev, ensure_ascii=False),
-                               json.dumps(sig, ensure_ascii=False)))
+        return None, None, (
+            "参数与上次批量任务不一致，无法续跑（会与已有进度冲突）。\n"
+            "差异如下：\n%s\n"
+            "如需按新参数重跑，请加 --reset（GUI：点「重置批次并重跑」）。"
+            % describe_signature_diff(prev, sig))
     completed = set() if reset else set((state or {}).get("completed", []))
     new_state = {"signature": sig, "completed": sorted(completed),
                  "started_at": (state or {}).get("started_at")

@@ -21,6 +21,8 @@ GUI_CASES = [
     gargv.translate_argv(char_ids="1", mode="custom", languages="en,ja"),
     gargv.translate_argv(char_ids="1", stories="character_details", overwrite=True,
                          segments_only=True, no_batch=True, balance=True),
+    gargv.translate_argv(char_ids="1", reset=True),
+    gargv.translate_argv(char_ids="1", mode="random", steps=7, reset=True, overwrite=True),
     gargv.fetch_argv("incremental"),
     gargv.fetch_argv("update", verbose=True),
     gargv.fetch_argv("refresh", quiet=True),

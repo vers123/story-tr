@@ -49,6 +49,14 @@ def test_quiet_beats_verbose():
     assert "-q" in a and "--verbose" not in a
 
 
+def test_reset_flag_only_when_requested():
+    """`--reset` 只在明确要重置批次时出现（GUI 的「重置批次并重跑」）。"""
+    assert "--reset" not in gargv.translate_argv(char_ids="1")
+    a = gargv.translate_argv(char_ids="1", reset=True)
+    assert a[a.index("--reset")] == "--reset"
+    assert gargv.parse(a).reset is True
+
+
 def test_fetch_modes():
     assert "--update" not in gargv.fetch_argv("incremental")
     assert "--refresh" not in gargv.fetch_argv("incremental")

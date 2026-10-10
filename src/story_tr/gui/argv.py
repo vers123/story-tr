@@ -25,7 +25,7 @@ def _verbosity(argv: list, verbose: bool, quiet: bool) -> list:
 def translate_argv(char_ids="", stories="", all_characters=False, mode="fixed", chain="asia",
                    languages="", steps=20, provider="", workers=1, full_only=False,
                    segments_only=False, overwrite=False, no_tts=False, no_batch=False,
-                   min_interval=DEFAULT_MIN_INTERVAL, balance=False,
+                   min_interval=DEFAULT_MIN_INTERVAL, balance=False, reset=False,
                    verbose=False, quiet=False) -> list:
     """组装 `story-tr translate` 的 argv。"""
     argv = ["translate"]
@@ -51,6 +51,8 @@ def translate_argv(char_ids="", stories="", all_characters=False, mode="fixed", 
         argv.append("--segments-only")
     if overwrite:
         argv.append("--overwrite")
+    if reset:
+        argv.append("--reset")
     if no_batch:
         argv.append("--no-batch")
     if balance:

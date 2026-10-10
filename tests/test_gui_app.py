@@ -17,9 +17,14 @@ from story_tr.gui import app as gapp  # noqa: E402
 
 
 @pytest.fixture(scope="module")
-def qapp():
+def qapp(tmp_path_factory):
+    from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
 
+    # 把 QSettings 重定向到临时 ini，避免测试读写真实注册表 / 用户配置
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope,
+                      str(tmp_path_factory.mktemp("settings")))
     app = QApplication.instance() or QApplication([])
     yield app
 
@@ -87,12 +92,141 @@ def test_progress_widgets_update(qapp):
     assert fetch.bar.value() == 3 and "3/10" in fetch.status.text()
 
 
-def test_busy_toggles_buttons(qapp):
+def test_busy_toggles_window_toolbar(qapp):
+    """「开始 / 停止」现在常驻窗口级工具条，切换页签不丢状态。"""
+    win = gapp.MainWindow()
+    try:
+        win._set_busy(True)
+        assert win.run_btn.isEnabled() is False and win.stop_btn.isEnabled() is True
+        win._set_busy(False)
+        assert win.stop_btn.isEnabled() is False
+    finally:
+        win.close()
+
+
+def test_toolbar_run_disabled_on_clean_and_browse(qapp):
+    """清理页要在页内用「预览 / 执行」；结果浏览页无任务 —— 工具条「开始」都禁用。"""
+    win = gapp.MainWindow()
+    try:
+        win.tabs.setCurrentWidget(win.translate_tab)
+        assert win.run_btn.isEnabled() is True
+        win.tabs.setCurrentWidget(win.clean_tab)
+        assert win.run_btn.isEnabled() is False
+        win.tabs.setCurrentWidget(win.browse_tab)
+        assert win.run_btn.isEnabled() is False
+    finally:
+        win.close()
+
+
+def test_parts_radios_are_mutually_exclusive(qapp):
+    """回归：这两个选项曾是 QCheckBox，可同时勾选 → 生成互斥参数被解析器拒绝。"""
+    from story_tr.gui import argv as gargv
+
     tab = gapp.TranslateTab()
-    tab.set_busy(True)
-    assert tab.run_btn.isEnabled() is False and tab.stop_btn.isEnabled() is True
-    tab.set_busy(False)
-    assert tab.run_btn.isEnabled() is True and tab.stop_btn.isEnabled() is False
+    tab.parts_btns["full"].setChecked(True)
+    assert tab.current_parts() == "full"
+    _, argv_list, _ = tab.build_job()
+    assert "--full-only" in argv_list and "--segments-only" not in argv_list
+    gargv.parse(argv_list)  # 真实解析器必须接受
+
+    tab.parts_btns["segments"].setChecked(True)
+    assert tab.current_parts() == "segments"
+    assert tab.parts_btns["full"].isChecked() is False  # 单选：旧的自动取消
+    _, argv_list, _ = tab.build_job()
+    assert "--segments-only" in argv_list and "--full-only" not in argv_list
+    gargv.parse(argv_list)
+
+
+def test_mode_switch_greys_dependent_fields(qapp):
+    tab = gapp.TranslateTab()
+    tab.mode_btns["fixed"].setChecked(True)
+    assert tab.chain.isEnabled() and not tab.custom_langs.isEnabled() \
+        and not tab.steps.isEnabled()
+    tab.mode_btns["random"].setChecked(True)
+    assert tab.steps.isEnabled() and not tab.chain.isEnabled()
+    tab.mode_btns["custom"].setChecked(True)
+    assert tab.custom_langs.isEnabled() and not tab.steps.isEnabled()
+
+
+def test_reset_rerun_adds_reset_flag(qapp):
+    """退出码 3 的出路：`build_job(reset=True)` 必须带上 `--reset`。"""
+    from story_tr.gui import argv as gargv
+
+    tab = gapp.TranslateTab()
+    tab.char_ids.setText("10000021")
+    _, argv_list, _ = tab.build_job(reset=True)
+    assert "--reset" in argv_list
+    ns = gargv.parse(argv_list)
+    assert ns.reset is True
+    _, plain, _ = tab.build_job()
+    assert "--reset" not in plain
+
+
+def test_done_keeps_progress_and_offers_reset(qapp):
+    """完成后进度条不清零；退出码 3 时出现「重置批次并重跑」。"""
+    win = gapp.MainWindow()
+    try:
+        tab = win.translate_tab
+        win._last_tab = tab
+        win._started_at = gapp.time.monotonic()
+        tab.on_progress({"event": "progress", "char_id": "10000021", "char_index": 1,
+                         "chars": 1, "tasks": 5, "done": 5})
+        win._on_done(0)
+        assert tab.bar.value() == 5  # 保留，而不是归零
+        assert win.reset_btn.isHidden() is True
+
+        win._on_done(3)
+        assert win.reset_btn.isHidden() is False
+    finally:
+        win.close()
+
+
+def test_log_panel_toggle_and_search(qapp):
+    win = gapp.MainWindow()
+    try:
+        win._append_log("INFO 可检索的标记")
+        win.log_toggle.setChecked(False)
+        assert win.log_view.isHidden() is True
+        assert win.log_search.isHidden() is True
+        win.log_toggle.setChecked(True)
+        assert win.log_view.isHidden() is False
+        win.log_search.setText("可检索")
+        win._find_next()
+        assert win.log_view.textCursor().selectedText() == "可检索"
+    finally:
+        win.close()
+
+
+def test_settings_roundtrip(qapp):
+    """表单配置（不含本次目标 id）经 QSettings 存/取一致。"""
+    from PySide6.QtCore import QSettings
+
+    settings = QSettings("story-tr", "story-tr-gui")
+    settings.clear()
+    tab = gapp.TranslateTab()
+    tab.mode_btns["random"].setChecked(True)
+    tab.workers.setValue(4)
+    tab.no_tts.setChecked(True)
+    tab.save_settings(settings)
+
+    restored = gapp.TranslateTab()
+    restored.load_settings(settings)
+    assert restored.current_mode() == "random"
+    assert restored.workers.value() == 4
+    assert restored.no_tts.isChecked() is True
+
+
+def test_as_bool_accepts_qt_variants():
+    assert gapp._as_bool(True) is True
+    assert gapp._as_bool("true") is True
+    assert gapp._as_bool("False") is False
+    assert gapp._as_bool("") is False
+
+
+def test_fmt_elapsed():
+    assert gapp.fmt_elapsed(45) == "45s"
+    assert gapp.fmt_elapsed(201) == "3m21s"
+    assert gapp.fmt_elapsed(-1) == "0s"
 
 
 def test_render_summary_sections():
