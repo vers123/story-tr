@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.13.1`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.13.2`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -522,6 +522,7 @@ story-tr translate 10000021 --no-batch
 - **全部角色**（`--all-characters`）：处理 `data/character.json` 中的全部角色，进度用「角色」总进度条
 - 输出：`result/{story}/title.json|mp3`、`full.json|mp3`、`seg_NN.json|mp3`、`segments.json`（汇总：标题/段号/源文/语言/最终结果/文件名）
 - 每份 json = 链路结果（源文/检出语言/语言路线/逐步/最终译文）+ `story` / `segment_index` / `source_file`
+- **纯符号段落**（如整段只有 `……`，全库共 83 处）：没有语言特征，判定不了也翻译不了 —— 直接**原样保留**、不发任何请求（json 里 `passthrough: true`、`source_detected_lang: "none"`、`steps: []`），也不生成语音
 - 续跑：`.translate_stories_state.json`（批量级进度，参数一致才续；键为 `id|story|key`）；已有结果默认跳过
   - 参数与上次不一致时会要求加 `--reset`；`story-tr clean` 会**重置批次签名**，之后可用新参数直接运行
 - 进度与输出：`tqdm` 双条（「角色」总进度条 + 每个角色的「翻译链」进度条），**进度条固定在底部**，明细逐行上滚 —— 每个故事组一行 `>>> …` / `<<< …（耗时）`，每份结果一行 `[id]  故事/键  字数  后端`；`--verbose` 再加每步明细与「跳过（已有结果）」行

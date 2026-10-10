@@ -126,6 +126,53 @@ def test_run_chain_many_splits_by_detected_language(monkeypatch):
     assert all(s == ["en1", "en2"] or s == ["zh1"] for s in groups)
 
 
+def test_has_features_counts_letters_only():
+    assert tc.has_features("abc") is True
+    assert tc.has_features("角色详细") is True
+    assert tc.has_features("—— 12 三") is True  # 「三」是汉字
+    assert tc.has_features("……") is False
+    assert tc.has_features("123") is False
+    assert tc.has_features("") is False
+    assert tc.has_features(None) is False
+
+
+def test_detect_language_survives_text_without_letters():
+    """回归：`10000020/vision` 第 9 段整段只有 `……`，langdetect 抛
+    `No features in text.` 直接崩掉整批任务（GUI 里表现为退出码 -1）。"""
+    assert tc.detect_language("……") == "en"
+    assert tc.detect_language("") == "en"
+    assert tc.detect_language("123") == "en"
+
+
+def test_run_chain_many_passes_through_texts_without_letters(monkeypatch):
+    """无文字内容的文本不发任何请求，原样保留。"""
+    def boom(*a, **k):
+        raise AssertionError("纯符号文本不应发起翻译请求")
+
+    monkeypatch.setattr(tc, "translate_step_many", boom)
+    res = stories.run_chain_many(["……"], ["ja", "ko"], ["google"], {}, LOG,
+                                 [{"story": "vision", "segment_index": 9}])
+    assert len(res) == 1
+    assert res[0]["final"] == "……"
+    assert res[0]["steps"] == []
+    assert res[0]["passthrough"] is True
+    assert res[0]["source_detected_lang"] == "none"
+    assert res[0]["story"] == "vision" and res[0]["segment_index"] == 9
+
+
+def test_run_chain_many_mixes_passthrough_and_normal(monkeypatch):
+    """同一批里既有 `……` 也有正常文本时，两条各走各的，且结果顺序与入参一致。"""
+    monkeypatch.setattr(tc, "translate_step_many",
+                        lambda texts, src, tgt, providers, cfg, log:
+                        ("google", ["<%s>" % t for t in texts]))
+    monkeypatch.setattr(tc, "detect_language", lambda t: "en")
+    res = stories.run_chain_many(["……", "hello"], ["ja"], ["google"], {}, LOG)
+    assert res[0]["passthrough"] is True and res[0]["final"] == "……"
+    assert "passthrough" not in res[1]
+    assert len(res[1]["steps"]) == 2  # ja 一步 + 译回中文一步
+    assert res[1]["final"] == "<<hello>>"
+
+
 def test_build_tasks_parts_filter(tmp_path):
     d = tmp_path / "vision"
     d.mkdir()

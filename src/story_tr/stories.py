@@ -112,12 +112,38 @@ def run_chain_many(texts, languages, providers, cfg, log, extras=None):
 
     先按**检出语言**分组（同一分组才能共享每步的 src/tgt），各步用
     `tc.translate_step_many` 推进——是否合并为一次请求由 `tc.translate_many` 决定。
+
+    **无文字内容**（纯标点 / 数字 / 空白，如角色故事里的 `……`）不参与链路：
+    既判定不了语言，翻译也没有意义，直接**原样保留**，不发任何请求。
     """
     texts = list(texts)
     extras = list(extras) if extras else [{} for _ in texts]
-    dets = [tc.detect_language(t) for t in texts]
     results = [None] * len(texts)
-    for det in dict.fromkeys(dets):
+
+    trivial = [not tc.has_features(t) for t in texts]
+    if any(trivial):
+        log.log(report.STEP, "  %d 条无文字内容（纯符号 / 数字），原样保留、不发请求",
+                sum(trivial))
+        stamp = datetime.now().isoformat(timespec="seconds")
+        for i, flag in enumerate(trivial):
+            if not flag:
+                continue
+            results[i] = {
+                "source": texts[i],
+                "source_detected_lang": "none",
+                "target_lang": tc.TARGET_ZH,
+                "provider": None,
+                "languages": languages,
+                "steps": [],
+                "final": texts[i],
+                "passthrough": True,
+                "started_at": stamp,
+                "finished_at": stamp,
+            }
+            results[i].update(extras[i])
+
+    dets = [None if trivial[i] else tc.detect_language(texts[i]) for i in range(len(texts))]
+    for det in dict.fromkeys(d for d in dets if d is not None):
         idx = [i for i, d in enumerate(dets) if d == det]
         started = datetime.now().isoformat(timespec="seconds")
         cur = {i: texts[i] for i in idx}
@@ -486,7 +512,8 @@ def main(args, on_progress=None, cancel=None) -> int:
                 def _save(task, json_path, mp3_path, result, elapsed=None):
                     with open(json_path, "w", encoding="utf-8") as f:
                         json.dump(result, f, ensure_ascii=False, indent=2)
-                    if not args.no_tts:
+                    if not args.no_tts and not result.get("passthrough"):
+                        # 纯符号（如 `……`）没有可朗读的内容，不生成语音
                         try:
                             audio = tc.google_tts_bytes(result["final"], tc.TARGET_ZH,
                                                         cfg.get("proxies"))

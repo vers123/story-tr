@@ -152,23 +152,40 @@ def normalize_detected(code: str) -> str:
 _detect_lock = threading.Lock()
 _detect_ready = False
 
+# 「文字」= Unicode 字母（含汉字）。langdetect 的特征只来自字母，
+# 纯标点（如 `……`）/ 纯数字 / 空白的文本没有任何特征可判。
+_LETTER_RE = re.compile(r"[^\W\d_]", re.UNICODE)
+
+
+def has_features(text: str) -> bool:
+    """文本是否含「文字」（字母 / 汉字等）—— langdetect 判语言所需的最小特征。"""
+    return bool(_LETTER_RE.search(text or ""))
+
 
 def detect_language(text: str) -> str:
     """判定源语言（固定 langdetect seed，保证结果可复现）。
 
     langdetect 的 `init_factory()` 非线程安全（profile 未加载完就被并发调用会抛
     `Need to load profiles`），故首次调用在锁内预热一次，之后即可并发使用。
+
+    无语言特征的文本（纯标点 / 数字 / 空白，如角色故事里的 `……`）直接按 `en` 返回：
+    既然无从判定，也就不需要「先译成英文」这一步，更不该让整批任务因此中断。
     """
     global _detect_ready
-    from langdetect import DetectorFactory, detect
+    from langdetect import DetectorFactory, LangDetectException, detect
 
+    if not has_features(text):
+        return "en"
     if not _detect_ready:
         with _detect_lock:
             if not _detect_ready:
                 DetectorFactory.seed = 0
                 detect("warmup")  # 触发 profile 加载完成
                 _detect_ready = True
-    return normalize_detected(detect(text))
+    try:
+        return normalize_detected(detect(text))
+    except LangDetectException:  # 极短文本等偶发判定失败，同样退回 en
+        return "en"
 
 
 def to_provider_lang(provider: str, code: str) -> str:

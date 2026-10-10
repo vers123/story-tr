@@ -2,6 +2,14 @@
 
 版本号遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)；递增规则与「初始开发阶段（`0.y.z`）」说明见 [README · 版本与变更](README.md#版本与变更)。
 
+## 0.13.2（2026-10-11）
+
+- **修复**：整段只有 `……` 的**纯符号段落**会让 `langdetect` 抛 `LangDetectException: No features in text.`，**整批翻译直接中断**（GUI 表现为「退出码 -1 / 异常（见日志）」，CLI 表现为异常退出）。全库共 **83 处**这种段落（如 `10000020 / vision` 的第 9 段）
+  - `chain.has_features()`：判断文本是否含「文字」（Unicode 字母 / 汉字）—— 这也是 langdetect 判语言的特征来源
+  - `chain.detect_language()`：无特征文本直接返回 `en`（既然无从判定，也就不需要「先译成英文」这一步），并兜住偶发的 `LangDetectException`
+  - `stories.run_chain_many()`：无文字内容的文本**不参与链路、不发任何请求**，直接**原样保留**（json 里标 `passthrough: true`、`source_detected_lang: "none"`、`steps: []`）；这类段落也**不再生成语音**（没有可朗读的内容）
+- **工程**：新增回归测试（`has_features`、纯符号文本不崩、单批内「纯符号 + 正常文本」混排时顺序与内容正确）；对全库 **974** 份 `zh.md` 复扫，语言判定失败数 **0**
+
 ## 0.13.1（2026-10-11）
 
 - **修复**：高显示缩放或小屏幕上，GUI 窗口被内容顶破 —— Windows 报 `QWindowsWindow::setGeometry: Unable to set geometry`，窗口最小高度超出屏幕可用高度，底部进度条 / 状态栏可能被挤出屏幕。翻译 / 抓取 / 清理三个页签改为**自身可滚动**（`QScrollArea`，`widgetResizable=True`），窗口最小高度由 **864 → 422 px**，内容超出时出现滚动条；结果浏览页本就是可伸缩的 `QSplitter`，无需包裹
