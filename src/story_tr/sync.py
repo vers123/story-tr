@@ -21,6 +21,7 @@ from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait
 from tqdm import tqdm
 
 from . import paths, report
+from .chain import Cancelled
 
 ROOT = paths.home()
 BASE = os.path.join(ROOT, "data")
@@ -138,13 +139,16 @@ def make_char_entry(cid, rec):
             "path": "data/story/character/%s" % cid, "stories": stories}
 
 
-def fetch_all(chars, mode="incremental"):
+def fetch_all(chars, mode="incremental", on_progress=None, cancel=None):
     """抓取角色数据，返回 (recs, info)。
 
     mode：
         incremental —— 只补缺失项（读缓存，不联网拉列表）
         update      —— 拉站点列表发现新角色 + 全量重抓以检测内容变化
         refresh     —— 忽略缓存，全量重抓
+
+    on_progress(dict)：进度回调（GUI 用），键 `event` / `done` / `total` / `char_id`。
+    cancel：`threading.Event`；置位后中止并抛 `chain.Cancelled`。
     """
     recs = {}
     if mode != "refresh" and os.path.exists(CACHE):
@@ -175,6 +179,8 @@ def fetch_all(chars, mode="incremental"):
         todo = [cid for cid in ids if not ok(recs.get(cid))]
     print("待抓取：%d / %d" % (len(todo), len(ids)))
     for n, cid in enumerate(tqdm(todo, desc="抓取", unit="角色", **report.bar_kwargs()), 1):
+        if cancel is not None and cancel.is_set():
+            raise Cancelled()
         rec = recs.get(cid) or {"id": cid}
         for loc in LOCS:
             rec.setdefault(loc, {})
@@ -211,6 +217,12 @@ def fetch_all(chars, mode="incremental"):
         log.info("[%s] 已抓取  en %d 故事 / chs %d 故事", cid,
                  len((rec.get("en") or {}).get("story") or []),
                  len((rec.get("chs") or {}).get("story") or []))
+        if on_progress is not None:
+            try:
+                on_progress({"event": "progress", "done": n, "total": len(todo),
+                             "char_id": cid})
+            except Exception:  # noqa: BLE001
+                pass
         if n % 20 == 0 or n == len(todo):
             dump(CACHE, [recs[i] for i in ids if i in recs])
 
@@ -396,7 +408,11 @@ def print_report(info):
             print("    + " + s)
 
 
-def main(args) -> int:
+def main(args, on_progress=None, cancel=None) -> int:
+    """数据抓取入口（CLI 与 GUI 共用）。
+
+    on_progress(dict) / cancel：见 `fetch_all`。被取消时返回 `6`。
+    """
     report.setup_console(report.console_level(args))
     mode = "refresh" if args.refresh else ("update" if args.update else "incremental")
     if os.path.exists(CHAR_FILE):
@@ -407,7 +423,11 @@ def main(args) -> int:
         chars = []
         mode = "update"
 
-    recs, info = fetch_all(chars, mode=mode)
+    try:
+        recs, info = fetch_all(chars, mode=mode, on_progress=on_progress, cancel=cancel)
+    except Cancelled:
+        log.warning("已取消；抓取缓存已按批写入 data/_fetch_all.json，重跑可续抓。")
+        return 6
 
     known = {c["id"] for c in chars}
     for cid in info["discovered"]:

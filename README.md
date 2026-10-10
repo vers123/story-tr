@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.10.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.11.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -20,6 +20,7 @@
 - [数据文件说明](#数据文件说明)
 - [命令（CLI）](#命令cli)
 - [MCP Server](#mcp-server)
+- [桌面界面（GUI）](#桌面界面gui)
 - [依赖与许可](#依赖与许可)
 - [版本与变更](#版本与变更)
 - [变更记录](CHANGELOG.md)
@@ -57,6 +58,8 @@ python main.py --help                  # 也可 python -m story_tr / python scri
 安装后提供命令 **`story-tr`**；等价入口还有 `python -m story_tr` 与 `python main.py`。
 
 > **MCP Server（可选）**：如需把项目接入 MCP 客户端，额外安装可选依赖：`pip install -e ".[mcp]"`（官方 `mcp` SDK **需 Python ≥3.10**）。安装后提供命令 **`story-tr-mcp`**（等价 `python -m story_tr.mcp`），详见 **[docs/mcp.md](docs/mcp.md)**。
+>
+> **桌面界面（可选）**：`pip install -e ".[gui]"`（PySide6）后提供命令 **`story-tr-gui`**（等价 `python -m story_tr.gui`），详见「[桌面界面（GUI）](#桌面界面gui)」。
 
 > **venv 下命令不在 PATH**：需先激活，或写全路径 `.venv\Scripts\story-tr.exe`（macOS/Linux 为 `.venv/bin/story-tr`）。
 
@@ -206,11 +209,15 @@ story-tr fetch --refresh
 │   ├── chain.py                        # story-tr chain（翻译链核心）
 │   ├── stories.py                      # story-tr translate（批量翻译）
 │   ├── clean.py                        # story-tr clean（清理 result/）
-│   └── mcp/                            # story-tr-mcp（MCP Server；需可选依赖）
+│   ├── mcp/                            # story-tr-mcp（MCP Server；需可选依赖）
 │       ├── server.py                   # Tool / Resource 注册 + stdio 运行
 │       ├── tools.py                    # Tool 函数（不依赖 mcp）
 │       ├── resources.py                # Resource 函数（不依赖 mcp）
 │       └── jobs.py                     # 长任务：串行队列 / 进度 / 取消（不依赖 mcp）
+│   └── gui/                            # story-tr-gui（PySide6 桌面界面；需可选依赖）
+│       ├── app.py                      # 主窗口：四个页签 + 实时日志面板
+│       ├── runner.py                   # QThread 执行核心 + 日志转发到界面
+│       └── argv.py                     # 表单 → CLI 参数（不依赖 PySide6）
 ├── scripts/                            # 兼容入口（转发到包内实现）
 │   ├── sync_from_site.py               # = story-tr fetch
 │   ├── sync_story_folders.py           # = story-tr folders
@@ -574,6 +581,33 @@ story-tr clean --all-characters --dry-run
 
 **完整说明见 → [docs/mcp.md](docs/mcp.md)**（客户端配置、分发安装、Tool / Resource 清单）
 
+## 桌面界面（GUI）
+
+可选的 **PySide6** 桌面应用：把「抓取 / 翻译 / 清理 / 结果浏览」与实时日志放进一个窗口，适合不想记命令行参数的场景。
+
+```bash
+pip install -e ".[gui]"      # PySide6（约 200MB）
+story-tr-gui                 # 等价：python -m story_tr.gui
+```
+
+| 页签 | 内容 |
+| --- | --- |
+| **翻译** | 角色 id / 范围（或全部）、故事、模式与链、后端、并发、最小间隔；只出全文 / 只出段落 / 重跑 / 不生成语音 / 详细日志；进度条 + 状态 |
+| **抓取** | 增量 / 更新（`--update`）/ 强制重抓（`--refresh`） |
+| **清理** | 角色与故事范围；**预览**（`--dry-run`）与**执行**（确认对话框 + `--yes`）；`--keep-state` |
+| **结果浏览** | 角色 → 故事 → `segments.json`（标题 / 全文 / 各段），只读 |
+| **日志面板** | 实时日志（与 CLI 同一套输出），可清空 / 保存为文件 |
+
+行为说明：
+
+- **复用包内核心**：GUI 直接调用 `stories.main` / `sync.main` / `clean.main`，参数由**真实 CLI 解析器**构造（`gui.argv.parse`），与命令行语义完全一致，不会随 `argparse` 漂移
+- **进度与取消**：核心通过 `on_progress(dict)` 回调上报进度；「停止」置位 `cancel`（`threading.Event`），核心在**下一个任务边界保存进度**后以退出码 `6` 返回 —— 不硬杀线程，避免留下半个结果文件
+- **日志同源**：直接挂 `translate_chain` logger（`report.setup_console` 只清理自己管理的 handler），因此与 CLI 完全一致，同时按 CLI 规则写入 `logs/`
+- 工作目录与 CLI 一致（`--data-dir` → `$STORY_TR_HOME` → 向上查找 → 当前目录），窗口顶部显示实际值；**启动后不可更改**（模块级路径常量在导入时确定）
+- 每次开始任务会在日志面板打印**等效命令行**（如 `$ story-tr translate --all-characters …`），便于复制到终端复现
+
+> `--workers > 1` 时已提交的任务无法逐个中断，「停止」会在**下一个角色**边界生效；并发为 `1`（默认）时按份生效。
+
 ## 依赖与许可
 
 本项目以 **MIT** 许可发布，见 [LICENSE](LICENSE)（Copyright © 2026 vers123）。
@@ -595,6 +629,12 @@ story-tr clean --all-characters --dry-run
 | 依赖 | 用途 | 许可 |
 | --- | --- | --- |
 | [mcp](https://github.com/modelcontextprotocol/python-sdk) | MCP Server（官方 Python SDK，`MCPServer`） | MIT |
+
+可选依赖（**桌面界面**，`pip install -e ".[gui]"`）：
+
+| 依赖 | 用途 | 许可 |
+| --- | --- | --- |
+| [PySide6](https://doc.qt.io/qtforpython/) | 桌面界面（Qt for Python，官方绑定） | LGPL-3.0 / 商业双许可 |
 
 > 说明：`beautifulsoup4` 为 `deep-translator` 的**传递依赖**（MIT），由 pip 自动安装，无需单独声明。
 

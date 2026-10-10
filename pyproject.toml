@@ -31,10 +31,13 @@ dependencies = [
 dev = ["build", "twine", "ruff", "pytest"]
 # MCP Server（只读）；官方 mcp SDK 需要 Python ≥3.10
 mcp = ["mcp>=2.0,<3; python_version >= '3.10'"]
+# PySide6 桌面界面
+gui = ["PySide6>=6.5"]
 
 [project.scripts]
 story-tr = "story_tr.cli:main"
 story-tr-mcp = "story_tr.mcp.server:main"
+story-tr-gui = "story_tr.gui.app:main"
 
 [project.urls]
 Homepage = "https://github.com/vers123/story-tr"

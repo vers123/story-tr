@@ -99,12 +99,25 @@ def test_emit_prints_when_not_interactive(monkeypatch, capsys):
 def test_setup_console_replaces_handler_and_sets_level():
     log = report.setup_console(logging.INFO)
     assert logging.getLogger("translate_chain") is log
-    assert len(log.handlers) == 1
-    assert isinstance(log.handlers[0], report.TqdmHandler)
-    assert log.handlers[0].level == logging.INFO
+    consoles = [h for h in log.handlers if isinstance(h, report.TqdmHandler)]
+    assert len(consoles) == 1
+    assert consoles[0].level == logging.INFO
     report.setup_console(logging.ERROR)
-    assert len(log.handlers) == 1
-    assert log.handlers[0].level == logging.ERROR
+    consoles = [h for h in log.handlers if isinstance(h, report.TqdmHandler)]
+    assert len(consoles) == 1
+    assert consoles[0].level == logging.ERROR
+
+
+def test_setup_console_keeps_external_handler():
+    """外部 handler（如 GUI 日志面板）不被清掉。"""
+    log = logging.getLogger("translate_chain")
+    ext = logging.NullHandler()
+    log.addHandler(ext)
+    try:
+        report.setup_console(logging.INFO)
+        assert ext in log.handlers
+    finally:
+        log.removeHandler(ext)
 
 
 # --------------------------------------------------------------------------- #

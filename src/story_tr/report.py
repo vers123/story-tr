@@ -65,13 +65,16 @@ def add_verbosity_args(p):
 
 
 def setup_console(level: int, name: str = "translate_chain") -> logging.Logger:
-    """给命令装一个「日志上滚、进度条固定底部」的控制台 logger（会清空已有 handler）。
+    """给命令装一个「日志上滚、进度条固定底部」的控制台 logger。
 
-    `chain.setup_logging` 在此基础上再叠加文件 handler（记全量明细）。
+    只替换**自己管理的** handler（控制台 / 文件），保留外部挂上的（如 GUI 日志面板的
+    handler），因此 GUI 可以先挂 handler 再调用核心。
     """
     log = logging.getLogger(name)
     log.setLevel(logging.DEBUG)
-    log.handlers.clear()
+    for h in list(log.handlers):
+        if isinstance(h, (TqdmHandler, logging.FileHandler)):
+            log.removeHandler(h)
     handler = TqdmHandler()
     handler.setLevel(level)
     handler.setFormatter(logging.Formatter("%(message)s"))
@@ -84,6 +87,8 @@ class TqdmHandler(logging.Handler):
 
     def emit(self, record):
         try:
+            if sys.stdout is None:  # 无控制台（pythonw 等）：只交给 GUI / 文件 handler
+                return
             msg = self.format(record)
             if interactive():
                 tqdm.write(msg)
@@ -96,6 +101,8 @@ class TqdmHandler(logging.Handler):
 
 def emit(line: str) -> None:
     """输出一行明细（替代进度条进行中的 `print`）。"""
+    if sys.stdout is None:
+        return
     if interactive():
         tqdm.write(line)
     else:

@@ -2,6 +2,19 @@
 
 版本号遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)；递增规则与「初始开发阶段（`0.y.z`）」说明见 [README · 版本与变更](README.md#版本与变更)。
 
+## 0.11.0（2026-10-09）
+
+- **新增**：**PySide6 桌面界面**（可选依赖 `.[gui]`，命令 `story-tr-gui` / `python -m story_tr.gui`）
+  - 页签：**翻译 / 抓取 / 清理 / 结果浏览** + 实时日志面板（清空 / 保存为文件）
+  - **复用包内核心**：直接调用 `stories.main` / `sync.main` / `clean.main`，参数由**真实 CLI 解析器**构造（`gui.argv.parse`），与命令行语义一致、不随 `argparse` 漂移
+  - 进度来自核心 `on_progress(dict)` 回调；「停止」置位 `cancel` 后核心在**任务边界保存进度**并以退出码 `6` 返回（不硬杀线程，避免半个结果文件）
+  - 日志直接挂 `translate_chain` logger，与 CLI **同源**；每次任务在面板打印**等效命令行**
+  - `gui.argv` / `gui.runner` 分层：前者不依赖 PySide6，可在任意环境测试
+- **新增**：核心可复用接口 —— `stories.main(args, on_progress, cancel)`、`sync.main(...)`、`sync.fetch_all(..., on_progress, cancel)`；新增 `chain.Cancelled`（退出码 `6`）
+- **变更**：`report.setup_console` 只清理**自己管理的** handler（控制台 / 文件），保留外部 handler（GUI 日志面板）
+- **变更**：`translate` 的收尾与异常提示由 `print` 改为日志（控制台输出不变，GUI 日志面板也能看到）
+- **工程**：新增 GUI 测试（`test_gui_argv.py` 不依赖 PySide6；`test_gui_app.py` 离屏构造窗口，未装 PySide6 时自动跳过，故 CI 无需安装 GUI 依赖）
+
 ## 0.10.0（2026-10-09）
 
 - **新增**：**控制台输出层** `report.py` —— 明细「上滚」、`tqdm` 进度条**固定在底部**

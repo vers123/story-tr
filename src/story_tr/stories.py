@@ -359,7 +359,13 @@ def providers_of(result) -> str:
     return "/".join(seen) if len(seen) <= 2 else "%s/…" % seen[0]
 
 
-def main(args) -> int:
+def main(args, on_progress=None, cancel=None) -> int:
+    """批量翻译入口（CLI 与 GUI 共用）。
+
+    on_progress(dict)：进度回调，键为 `event`（`char_start` / `progress` / `char_done`）、
+    `char_id`、`char_index`、`chars`、`tasks`、`done`。
+    cancel：`threading.Event`；置位后在下一次检查点中止（保存进度并返回 `6`）。
+    """
     if args.char_ids and args.all_characters:
         print("不能同时指定角色 id 与 --all-characters，请二选一。")
         return 1
@@ -370,6 +376,15 @@ def main(args) -> int:
 
     log, logfile = tc.setup_logging(args.no_file_log, report.console_level(args))
     cfg = tc.build_cfg(args)
+
+    def _notify(**kw):
+        """回调进度；回调自身出错不影响翻译。"""
+        if on_progress is not None:
+            try:
+                on_progress(kw)
+            except Exception:  # noqa: BLE001
+                pass
+
     providers = [args.provider] if args.provider else ["google", "bing", "baidu"]
     provider_label = providers[0] if len(providers) == 1 else " → ".join(providers)
     parts = parts_label(args)
@@ -395,7 +410,9 @@ def main(args) -> int:
                  **report.bar_kwargs(len(char_ids) <= 1))
     try:
         with outer:
-            for char_id in outer:
+            for char_index, char_id in enumerate(outer, 1):
+                if cancel is not None and cancel.is_set():
+                    raise tc.Cancelled()
                 base = os.path.join(STORY_ROOT, char_id, "profile", "story")
                 stories = resolve_stories(args, char_id)
                 tasks = build_tasks(base, char_id, stories, log, parts) if stories else []
@@ -405,6 +422,8 @@ def main(args) -> int:
 
                 log.info("角色 %s，故事 %s，共 %d 份结果（%s）",
                          char_id, ",".join(stories), len(tasks), mode_label)
+                _notify(event="char_start", char_id=char_id, char_index=char_index,
+                        chars=len(char_ids), tasks=len(tasks), done=0)
 
                 done_stories = set()
                 stats = {"n": 0}
@@ -456,6 +475,8 @@ def main(args) -> int:
 
                 def _process_unit(unit):
                     """处理一组任务（可被多线程并发调用；共享状态加锁），返回该组任务数。"""
+                    if cancel is not None and cancel.is_set():
+                        raise tc.Cancelled()
                     todo = []
                     for t in unit:
                         d, json_path, mp3_path = result_paths(char_id, t["story"], t["key"])
@@ -491,43 +512,56 @@ def main(args) -> int:
                 bar = tqdm(total=len(tasks), desc="翻译链", unit="份",
                            position=1 if len(char_ids) > 1 else 0,
                            leave=True, **report.bar_kwargs())
+
+                def _tick():
+                    _notify(event="progress", char_id=char_id, char_index=char_index,
+                            chars=len(char_ids), tasks=len(tasks), done=int(bar.n))
+
                 try:
                     if args.workers > 1:
                         with ThreadPoolExecutor(max_workers=args.workers) as ex:
                             futures = [ex.submit(_process_unit, u) for u in units]
                             for fut in as_completed(futures):
                                 bar.update(fut.result())
+                                _tick()
                     else:
                         for u in units:
                             bar.update(_process_unit(u))
+                            _tick()
                 finally:
                     bar.close()
                 processed += stats["n"]
+                _notify(event="char_done", char_id=char_id, char_index=char_index,
+                        chars=len(char_ids), tasks=len(tasks), done=int(bar.n))
 
                 for story in done_stories:
                     write_summary(char_id, story, provider_label, mode_label)
+    except tc.Cancelled:
+        save_state(state)
+        log.warning("已取消；进度已保存（.translate_stories_state.json），重跑可续跑。")
+        return 6
     except tc.Paused as exc:
         save_state(state)
-        print("已暂停：%s" % exc)
-        print("进度已保存（.translate_stories_state.json），修复后重跑即可续跑。")
+        log.error("已暂停：%s", exc)
+        log.error("进度已保存（.translate_stories_state.json），修复后重跑即可续跑。")
         return 4
     except tc.ConnectionIssue as exc:
         save_state(state)
-        print("后端连接失败：\n%s" % exc)
-        print("检查网络/代理后重跑即可续跑。")
+        log.error("后端连接失败：\n%s", exc)
+        log.error("检查网络/代理后重跑即可续跑。")
         return 5
     except tc.UnsupportedLanguage as exc:
         save_state(state)
-        print("语言不受支持：%s" % exc)
+        log.error("语言不受支持：%s", exc)
         return 2
 
     if os.path.exists(STATE_PATH):
         os.remove(STATE_PATH)
     if len(char_ids) == 1:
-        print("完成。结果目录：%s" % rel(os.path.join(story_dir(char_ids[0]), "")))
+        log.info("完成。结果目录：%s", rel(os.path.join(story_dir(char_ids[0]), "")))
     else:
-        print("完成。处理 %d 个角色、%d 份结果，结果在各 {id}/result/ 下。"
-              % (len(char_ids), processed))
+        log.info("完成。处理 %d 个角色、%d 份结果，结果在各 {id}/result/ 下。",
+                 len(char_ids), processed)
     if logfile:
-        print("日志：%s" % rel(logfile))
+        log.info("日志：%s", rel(logfile))
     return 0
