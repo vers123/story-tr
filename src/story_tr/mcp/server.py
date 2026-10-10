@@ -133,16 +133,20 @@ def build_server() -> MCPServer:
     @_tool_errors
     def translate_start(char_ids: str, stories: str = "", mode: str = "fixed",
                         chain: str = "asia", workers: int = 1, provider: str = "",
-                        full_only: bool = False, segments_only: bool = False) -> dict:
+                        full_only: bool = False, segments_only: bool = False,
+                        languages: str = "") -> dict:
         ids = tools.resolve_ids(char_ids)
         if not ids:
             raise ValueError("没有匹配到任何角色 id：%s" % char_ids)
+        if mode == "custom" and not languages.strip():
+            raise ValueError('mode="custom" 需要用 languages 指定语言序列（逗号分隔），'
+                             '如 languages="en,ja"；其他模式请用 mode="fixed" 或 "random"。')
         parts = "full" if full_only else "segments" if segments_only else "both"
         total = tools.count_translate_tasks(ids, stories, parts)
         job = jobs.manager().submit(
             "translate",
             tools.translate_argv(char_ids, stories, mode, chain, workers, provider,
-                                 full_only, segments_only),
+                                 full_only, segments_only, languages),
             progress_fn=tools.make_translate_progress(ids, total))
         out = job.summary()
         out["characters"] = len(ids)

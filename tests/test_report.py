@@ -128,6 +128,7 @@ def test_setup_console_keeps_external_handler():
     ("chain", ["hello"]),
     ("fetch", []),
     ("folders", []),
+    ("clean", ["10000021"]),
 ])
 def test_verbosity_flags_accepted(name, extra):
     args = cli.build_parser().parse_args([name] + extra + ["-q"])

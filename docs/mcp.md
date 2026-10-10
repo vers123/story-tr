@@ -126,7 +126,7 @@ pip install --no-index --find-links=bundle "story-tr[mcp]"           # 目标机
 > **长任务说明**：`translate` / `fetch` 由 MCP 以**子进程**调用既有 CLI（`python -m story_tr …`），
 > 同一时刻**只跑一个写任务**（串行队列），避免多个任务争用 `.translate_stories_state.json`；
 > 子进程输出写入 `logs/mcp_<job_id>.log`（`logs/` 已忽略）；job 表存在**内存**中，服务重启即丢列表，但底层断点仍在（重跑可续）。
-> `translate` 只暴露安全参数（`char_ids` / `stories` / `mode` / `chain` / `workers` / `provider` / `full_only` / `segments_only`），
+> `translate` 只暴露安全参数（`char_ids` / `stories` / `mode` / `chain` / `workers` / `provider` / `full_only` / `segments_only` / `languages`），
 > **不含** `--overwrite` / `--reset`。
 >
 > 工具/资源报错会把**原因**透传给客户端（如「未知 job_id：…」「尚无翻译结果：…」），便于模型自我纠正。

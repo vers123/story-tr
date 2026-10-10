@@ -3,7 +3,6 @@
 
 未安装 PySide6 时整组跳过（`pip install -e ".[gui]"` 后可跑）。
 """
-import logging
 import os
 
 import pytest
@@ -113,12 +112,39 @@ def test_render_summary_falls_back_to_json():
     assert "unexpected" in text
 
 
-def test_log_handler_emits_signal(qapp):
-    handler = gapp.QtLogHandler()
+def test_stream_relay_splits_lines(qapp):
+    from story_tr.gui.runner import StreamRelay
+
+    relay = StreamRelay()
     seen = []
-    handler.message.connect(seen.append)
-    handler.emit(logging.LogRecord("x", logging.INFO, __file__, 1, "你好", None, None))
-    assert seen == ["你好"]
+    relay.line.connect(seen.append)
+    relay.write("a\nb\n")
+    relay.write("c")  # 未换行 → 缓冲，不立即发
+    assert seen == ["a", "b"]
+    relay.flush()
+    assert seen == ["a", "b", "c"]
+    assert relay.isatty() is False  # 让 report.interactive() 为 False → 禁用进度条
+
+
+def test_capture_streams_roundtrip(qapp):
+    """接管 stdout 后：print 进面板、进度条自动禁用、还原后恢复原流。"""
+    import sys
+
+    from story_tr import report
+    from story_tr.gui.runner import StreamRelay, capture_streams
+
+    relay = StreamRelay()
+    seen = []
+    relay.line.connect(seen.append)
+    before = sys.stdout
+    restore = capture_streams(relay)
+    try:
+        assert report.interactive() is False
+        print("喂给面板")
+    finally:
+        restore()
+    assert sys.stdout is before
+    assert "喂给面板" in seen
 
 
 def test_runner_calls_hooks_and_reports_exit_code(qapp):

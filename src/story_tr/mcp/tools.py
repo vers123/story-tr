@@ -145,14 +145,20 @@ def _base_argv() -> list:
 
 def translate_argv(char_ids: str, stories_filter: str = "", mode: str = "fixed",
                    chain: str = "asia", workers: int = 1, provider: str = "",
-                   full_only: bool = False, segments_only: bool = False) -> list:
-    """构造 `story-tr translate` 的命令行（安全子集，不含 --overwrite / --reset）。"""
+                   full_only: bool = False, segments_only: bool = False,
+                   languages: str = "") -> list:
+    """构造 `story-tr translate` 的命令行（安全子集，不含 --overwrite / --reset）。
+
+    `mode="custom"` **必须**同时给 `languages`（逗号分隔），否则 CLI 会直接报错退出。
+    """
     argv = _base_argv() + ["translate", char_ids]
     if stories_filter:
         argv += ["--stories", stories_filter]
     argv += ["--mode", mode]
     if mode == "fixed":
         argv += ["--chain", chain]
+    if mode == "custom" and languages.strip():
+        argv += ["--languages", languages.strip()]
     argv += ["--workers", str(int(workers))]
     if provider:
         argv += ["--provider", provider]

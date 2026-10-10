@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import sys
 from datetime import datetime
 
@@ -44,9 +43,10 @@ from PySide6.QtWidgets import (
 from .. import __version__, clean, paths, stories, sync
 from ..mcp import tools as mtools
 from . import argv as gargv
-from .runner import LOG_NAME, QtLogHandler, TaskRunner, attach_log_handler
+from .runner import StreamRelay, TaskRunner, capture_streams
 
 EXIT_LABELS = {
+    -1: "异常（见日志）",
     0: "完成",
     2: "语言不受支持",
     3: "批量状态与上次不一致",
@@ -461,9 +461,10 @@ class MainWindow(QMainWindow):
         lay.addWidget(split)
         self.setCentralWidget(central)
 
-        self.log_handler = QtLogHandler(self)
-        self.log_handler.message.connect(self._append_log)
-        attach_log_handler(self.log_handler)
+        # 日志面板：接管 stdout/stderr（核心既有 logging 也有 print，两者都要收）
+        self.relay = StreamRelay(self)
+        self.relay.line.connect(self._append_log)
+        self._restore_streams = None
         self._append_log("就绪。等效命令行会打印在这里；日志同时按 CLI 规则写入 logs/。")
 
     # ---------------------------------------------------------------- 运行
@@ -478,9 +479,11 @@ class MainWindow(QMainWindow):
             return
         self._append_log("$ story-tr " + " ".join(argv_list))
         self._set_busy(True)
+        self._restore_streams = capture_streams(self.relay)
         self.runner = TaskRunner(fn, ns, hooks=hooks, parent=self)
         self.runner.progress.connect(self._on_progress)
         self.runner.finished_with.connect(self._on_done)
+        self.runner.error.connect(lambda msg: self._append_log("任务异常：%s" % msg))
         self.runner.start()
 
     def _on_stop(self):
@@ -493,7 +496,14 @@ class MainWindow(QMainWindow):
         if hasattr(tab, "on_progress"):
             tab.on_progress(info)
 
+    def _restore(self):
+        """还原 stdout/stderr（幂等）。"""
+        if self._restore_streams is not None:
+            self._restore_streams()
+            self._restore_streams = None
+
     def _on_done(self, rc: int):
+        self._restore()
         self._append_log("任务结束：退出码 %d —— %s" % (rc, EXIT_LABELS.get(rc, "未知")))
         self._set_busy(False)
         self.browse_tab.reload()
@@ -518,11 +528,8 @@ class MainWindow(QMainWindow):
         self._append_log("日志已保存：%s" % path)
 
     def closeEvent(self, event):  # noqa: N802 - Qt 约定
-        """关闭时摘掉日志 handler，避免残留到进程内其它使用方。"""
-        try:
-            logging.getLogger(LOG_NAME).removeHandler(self.log_handler)
-        except Exception:  # noqa: BLE001
-            pass
+        """关闭时还原 stdout/stderr（避免把接管状态留给进程内其它使用方）。"""
+        self._restore()
         super().closeEvent(event)
 
 

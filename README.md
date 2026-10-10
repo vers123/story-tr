@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.11.2`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.12.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -562,6 +562,7 @@ story-tr clean --all-characters --dry-run
 | `--dry-run` | 只预览将删除的内容（目录、文件数、占用大小），不实际删除 |
 | `-y` / `--yes` | 跳过交互确认 |
 | `--keep-state` | 保留 `.translate_stories_state.json` 记录（默认同步清理） |
+| `-q` / `--verbose` | 控制台详略：`-q` 只显示错误与最终摘要；`--verbose` 列出目录的**完整相对路径**（默认只显示目录名） |
 
 行为说明：
 
@@ -617,7 +618,7 @@ story-tr-gui                 # 等价：python -m story_tr.gui
 
 - **复用包内核心**：GUI 直接调用 `stories.main` / `sync.main` / `clean.main`，参数由**真实 CLI 解析器**构造（`gui.argv.parse`），与命令行语义完全一致，不会随 `argparse` 漂移
 - **进度与取消**：核心通过 `on_progress(dict)` 回调上报进度；「停止」置位 `cancel`（`threading.Event`），核心在**下一个任务边界保存进度**后以退出码 `6` 返回 —— 不硬杀线程，避免留下半个结果文件
-- **日志同源**：直接挂 `translate_chain` logger（`report.setup_console` 只清理自己管理的 handler），因此与 CLI 完全一致，同时按 CLI 规则写入 `logs/`
+- **日志完整**：运行时接管 `sys.stdout` / `sys.stderr` 转发到日志面板 —— 核心既有 `logging`（如每份结果一行）也有 `print`（如 `fetch` 的校验报告、`clean` 的清单），**两者都会显示**；面板内容与 CLI 控制台一致，同时按 CLI 规则写入 `logs/`。接管期间 `report.interactive()` 为假，因此**进度条自动禁用**，面板里不会出现 `\r` 重绘
 - 工作目录与 CLI 一致（`--data-dir` → `$STORY_TR_HOME` → 向上查找 → 当前目录），窗口顶部显示实际值；**启动后不可更改**（模块级路径常量在导入时确定）
 - 每次开始任务会在日志面板打印**等效命令行**（如 `$ story-tr translate --all-characters …`），便于复制到终端复现
 

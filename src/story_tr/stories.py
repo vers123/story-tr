@@ -557,11 +557,12 @@ def main(args, on_progress=None, cancel=None) -> int:
 
     if os.path.exists(STATE_PATH):
         os.remove(STATE_PATH)
+    # 收尾摘要用 print：不受 -q 的日志级别过滤（`-q` = 只显示错误与最终摘要）
     if len(char_ids) == 1:
-        log.info("完成。结果目录：%s", rel(os.path.join(story_dir(char_ids[0]), "")))
+        print("完成。结果目录：%s" % rel(os.path.join(story_dir(char_ids[0]), "")))
     else:
-        log.info("完成。处理 %d 个角色、%d 份结果，结果在各 {id}/result/ 下。",
-                 len(char_ids), processed)
+        print("完成。处理 %d 个角色、%d 份结果，结果在各 {id}/result/ 下。"
+              % (len(char_ids), processed))
     if logfile:
-        log.info("日志：%s", rel(logfile))
+        print("日志：%s" % rel(logfile))
     return 0

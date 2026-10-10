@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import shutil
 
-from . import paths, stories
+from . import paths, report, stories
 
 
 # --------------------------------------------------------------------------- #
@@ -123,6 +123,7 @@ def add_parser(sub):
     g.add_argument("-y", "--yes", action="store_true", help="跳过交互确认")
     g.add_argument("--keep-state", action="store_true",
                    help="保留 .translate_stories_state.json 记录（默认同步清理，否则重跑会被跳过）")
+    report.add_verbosity_args(p)
 
     p.set_defaults(func=main)
     return p
@@ -159,13 +160,18 @@ def main(args) -> int:
         print("没有可清理的翻译结果。")
         return 0
 
-    print("将清理以下 result/ 内容：")
-    for cid, ts, n, size in plan:
-        label = ", ".join(os.path.basename(t) for t in ts)
-        print("  %s/result/  [%s]  %d 个文件，%s" % (cid, label, n, human(size)))
-    print("合计：%d 个角色，%d 个文件，%s" % (len(plan), total_n, human(total_size)))
-    print("状态记录：%s（%d 条）" % ("保留（--keep-state）" if args.keep_state else "同步清理并重置批次签名",
-                                  state_hits))
+    if not args.quiet:  # -q 只看错误与最终摘要
+        print("将清理以下 result/ 内容：")
+        for cid, ts, n, size in plan:
+            # --verbose 显示完整相对路径，默认只显示目录名
+            label = ", ".join(
+                os.path.relpath(t, paths.home()).replace(os.sep, "/") if args.verbose
+                else os.path.basename(t) for t in ts)
+            print("  %s/result/  [%s]  %d 个文件，%s" % (cid, label, n, human(size)))
+        print("合计：%d 个角色，%d 个文件，%s" % (len(plan), total_n, human(total_size)))
+        print("状态记录：%s（%d 条）"
+              % ("保留（--keep-state）" if args.keep_state else "同步清理并重置批次签名",
+                 state_hits))
 
     if args.dry_run:
         print("--dry-run：未做任何删除。")

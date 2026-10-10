@@ -2,6 +2,15 @@
 
 版本号遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)；递增规则与「初始开发阶段（`0.y.z`）」说明见 [README · 版本与变更](README.md#版本与变更)。
 
+## 0.12.0（2026-10-09）
+
+- **修复**：`story-tr clean` 不认 `-q` / `--verbose`，而 GUI 的「显示明细」会把它们传下去 —— 勾选后任务直接以「参数不合法」失败。现在 `clean` 也支持这两个开关（`-q` 只显示错误与最终摘要；`--verbose` 显示目录的完整相对路径）
+- **修复**：GUI 日志面板只看得到 `logging`、看不到 `print` —— `fetch` 的「待抓取 / 校验报告」与 `clean` 的清理清单**完全不可见**（界面却提示「会写入下方日志面板」）。改为运行时接管 `sys.stdout` / `sys.stderr` 转发到面板，`logging` 与 `print` **两者都收**；接管期间 `report.interactive()` 为假，**进度条自动禁用**，面板不会出现 `\r` 重绘
+- **修复**：GUI 后台任务抛异常（如 `mode=custom` 缺 `--languages` 触发的 `SystemExit`）时不会发出结束信号 → 界面**卡在「忙碌」**。`TaskRunner` 现在捕获 `BaseException` 并发 `error` 信号，面板显示「任务异常：…」后正常收尾
+- **新增**：MCP `translate_start` 暴露 **`languages`** 参数 —— 此前 `mode="custom"` 无对应入参，跑起来必失败；缺参时现在直接给出明确错误
+- **变更**：`report.setup_console` 只替换**自己管理的** handler（控制台 / 文件），不再清空调用方挂上的 handler
+- **工程**：新增参数一致性护栏 `tests/test_argv_consistency.py` —— GUI 与 MCP 这两条「不经 `argparse` 生成命令行」的路径，其产出必须能被**真实解析器**接受（本次两个 argv 类 bug 都能被它拦住）
+
 ## 0.11.2（2026-10-09）
 
 - **修复**：GUI「最小间隔」用的是**整数** `QSpinBox` 且默认 `0` —— 既填不出推荐的 `0.3`，又把 CLI 默认的 `0.3` 覆盖成「关闭节流」（易触发 429）。现改为 `QDoubleSpinBox`（步长 `0.1`、默认取 `DEFAULT_MIN_INTERVAL`），并加回归测试锁定「GUI 默认 == CLI 默认」
