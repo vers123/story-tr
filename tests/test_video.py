@@ -127,6 +127,36 @@ def test_wrap_text_avoids_leading_punctuation():
             assert not line or line[0] not in vid._NO_START, (width, lines)
 
 
+def test_frame_geometry_centers_icon_on_rule():
+    """图标垂直中心必须与划线重合，且整组贴底。"""
+    box = {"height": 300, "src_lines": ["a", "b"], "src_lh": 50, "gap": 10}
+    geo = vid.frame_geometry(box)
+    assert geo["rule_y"] == geo["icon_top"] + vid.ICON // 2
+    assert geo["top"] + 2 * 50 + 10 == geo["rule_y"]
+    assert geo["top"] + box["height"] == vid.OUT_H - vid.ICON_BOTTOM
+
+
+def test_render_frame_keeps_background_undimmed(tmp_path):
+    """回归：不再加黑色底板、不再压暗 —— 四角应保持背景原色。"""
+    Image, _, _ = vid._pil()
+    try:
+        vid.find_fonts()
+    except vid.VideoError:
+        pytest.skip("没有可用中文字体")
+
+    bg = tmp_path / "bg.png"
+    Image.new("RGB", (640, 360), (30, 40, 60)).save(bg)
+    logo = tmp_path / "logo.png"
+    Image.new("RGBA", (64, 64), (47, 111, 237, 255)).save(logo)
+    out = tmp_path / "frame.png"
+    vid.render_frame(str(bg), str(logo), "原文", "译文", str(out))
+
+    im = Image.open(out).convert("RGB")
+    assert im.size == (vid.OUT_W, vid.OUT_H)
+    for xy in ((5, 5), (vid.OUT_W - 5, 5), (5, vid.OUT_H - 5)):
+        assert im.getpixel(xy) == (30, 40, 60)
+
+
 def test_layout_text_shrinks_then_truncates():
     Image, ImageDraw, ImageFont = vid._pil()
     try:
@@ -151,6 +181,53 @@ def test_layout_text_shrinks_then_truncates():
 # --------------------------------------------------------------------------- #
 # 端到端（需要 ffmpeg + 字体）
 # --------------------------------------------------------------------------- #
+def test_build_audio_track_pads_silence(tmp_path):
+    if not shutil.which("ffmpeg"):
+        pytest.skip("没有 ffmpeg")
+    out = tmp_path / "audio.m4a"
+    vid.build_audio_track([None, None], [0.5, 0.7], str(out))
+    assert out.exists() and out.stat().st_size > 0
+    assert abs(vid.probe_duration(str(out)) - 1.2) < 0.25
+
+
+def test_prepare_audio_reuses_cache(tmp_path, monkeypatch):
+    """缓存命中时不应再调用 gTTS。"""
+    if not shutil.which("ffmpeg"):
+        pytest.skip("没有 ffmpeg")
+    monkeypatch.setattr(stories, "STORY_ROOT", str(tmp_path))
+    adir = vid.audio_dir("1", "vision")
+    os.makedirs(adir, exist_ok=True)
+    cached = os.path.join(adir, "seg_01.mp3")
+    vid._run([vid._ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
+              "-f", "lavfi", "-i", "anullsrc=channel_layout=mono:sample_rate=24000",
+              "-t", "3.5", "-c:a", "libmp3lame", cached])
+
+    calls = []
+    monkeypatch.setattr("story_tr.chain.google_tts_bytes",
+                        lambda *a, **k: calls.append(1))
+    paths, durations, total = vid.prepare_audio(
+        "1", "vision", [{"index": 1, "source": "原", "final": "译"}], base_duration=3.0)
+    assert calls == []
+    assert paths == [cached]
+    assert 3.8 <= durations[0] <= 4.1  # 3.5s 语音 + 0.4s 余量（大于基础 3s）
+    assert total == durations[0]
+
+
+def test_prepare_audio_falls_back_to_silence(tmp_path, monkeypatch):
+    """单段 TTS 失败时退回静音，不中断整条视频。"""
+    monkeypatch.setattr(stories, "STORY_ROOT", str(tmp_path))
+
+    def boom(*a, **k):
+        raise RuntimeError("no network")
+
+    monkeypatch.setattr("story_tr.chain.google_tts_bytes", boom)
+    paths, durations, total = vid.prepare_audio(
+        "1", "vision", [{"index": 1, "source": "原", "final": "译"}], base_duration=3.0)
+    assert paths == [None]
+    assert durations == [3.0]
+    assert total == 3.0
+
+
 def test_render_story_and_total(tmp_path, monkeypatch):
     if not shutil.which("ffmpeg"):
         pytest.skip("没有 ffmpeg")

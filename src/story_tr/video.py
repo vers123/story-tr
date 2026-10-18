@@ -33,20 +33,18 @@ MARGIN = 48
 ICON = 120
 ICON_X = 45
 ICON_BOTTOM = 54
-PANEL_LEFT = ICON_X + ICON + 42
+TEXT_X = ICON_X + ICON + 24          # 文字左缘（图标右缘再留 24px）
+RULE_X0 = ICON_X + ICON              # 划线从图标右缘开始
 PANEL_RIGHT = OUT_W - MARGIN
-PANEL_BOTTOM = ICON_BOTTOM
-PANEL_PAD_X = 28
-PANEL_PAD_Y = 22
-TEXT_MAX_W = PANEL_RIGHT - PANEL_LEFT - 2 * PANEL_PAD_X
-TEXT_MAX_H = int(OUT_H * 0.42) - 2 * PANEL_PAD_Y
+TEXT_MAX_W = PANEL_RIGHT - TEXT_X
+TEXT_MAX_H = int(OUT_H * 0.52)       # 无底板，可用高度放宽
 FONT_MAX = 54
 FONT_MIN = 24
 
 SOURCE_COLOR = (255, 255, 255)
 FINAL_COLOR = (255, 214, 107)
-PANEL_FILL = (0, 0, 0, 107)          # 约 42% 黑
-DIM_ALPHA = 64                       # 约 25% 黑
+RULE_COLOR = (255, 255, 255, 150)
+STROKE_FILL = (0, 0, 0, 220)
 
 # 剧情顺序：角色详细 → 角色故事 1~5 → 神之眼 → 其余（角色专属故事）按名排序
 BASE_ORDER = ["character_details"] + ["character_story_%d" % i for i in range(1, 6)] + ["vision"]
@@ -76,6 +74,11 @@ def profile_story_dir(char_id: str) -> str:
 
 def video_dir(char_id: str) -> str:
     return os.path.join(stories.story_dir(char_id), "video")
+
+
+def audio_dir(char_id: str, story: str) -> str:
+    """TTS 缓存目录（与翻译产物分开，避免影响 `clean` / 续跑）。"""
+    return os.path.join(video_dir(char_id), "audio", story)
 
 
 def story_sort_key(name: str):
@@ -315,8 +318,29 @@ def _cover_resize(img, width: int, height: int):
     return img.crop((left, top, left + width, top + height))
 
 
+def frame_geometry(box: dict) -> dict:
+    """计算整组（原文 + 划线 + 译文 + 图标）的垂直位置。
+
+    整组贴底；图标垂直中心与划线对齐。
+    """
+    group_top = OUT_H - ICON_BOTTOM - box["height"]
+    src_h = len(box["src_lines"]) * box["src_lh"]
+    rule_y = group_top + src_h + box["gap"]
+    return {"top": group_top, "rule_y": rule_y, "icon_top": rule_y - ICON // 2}
+
+
+def _load_logo(path: str):
+    """读取 logo、裁掉透明留白，再缩放到 ICON×ICON（保证划线能贴住图标）。"""
+    Image, _, _ = _pil()
+    img = Image.open(path).convert("RGBA")
+    bbox = img.getchannel("A").getbbox()
+    if bbox:
+        img = img.crop(bbox)
+    return img.resize((ICON, ICON), Image.LANCZOS)
+
+
 def render_frame(bg_path: str, logo_path: str, source: str, final: str, out_path: str) -> None:
-    """合成一帧（背景 + 压暗 + 文本块 + logo）并保存为 PNG。"""
+    """合成一帧（背景 + 描边文字 + 划线 + logo），**不加底板、不压暗**。"""
     Image, ImageDraw, ImageFont = _pil()
     bold_path, regular_path = find_fonts()
 
@@ -325,30 +349,31 @@ def render_frame(bg_path: str, logo_path: str, source: str, final: str, out_path
         return ImageFont.truetype(path, size, index=0)
 
     canvas = _cover_resize(Image.open(bg_path).convert("RGB"), OUT_W, OUT_H).convert("RGBA")
-    canvas = Image.alpha_composite(canvas, Image.new("RGBA", canvas.size, (0, 0, 0, DIM_ALPHA)))
     draw = ImageDraw.Draw(canvas)
 
     box = layout_text(draw, source, final, make_font)
-    panel_h = box["height"] + 2 * PANEL_PAD_Y
-    panel_top = OUT_H - PANEL_BOTTOM - panel_h
-    draw.rounded_rectangle(
-        (PANEL_LEFT, panel_top, PANEL_RIGHT, OUT_H - PANEL_BOTTOM),
-        radius=18, fill=PANEL_FILL)
+    geo = frame_geometry(box)
+    stroke = max(2, box["size"] // 16)
 
-    x = PANEL_LEFT + PANEL_PAD_X
-    y = panel_top + PANEL_PAD_Y
+    x = TEXT_X
+    y = geo["top"]
     for line in box["src_lines"]:
-        draw.text((x, y), line, font=box["src_font"], fill=SOURCE_COLOR)
+        draw.text((x, y), line, font=box["src_font"], fill=SOURCE_COLOR,
+                  stroke_width=stroke, stroke_fill=STROKE_FILL)
         y += box["src_lh"]
-    y += box["gap"]
-    draw.line((x, y, PANEL_RIGHT - PANEL_PAD_X, y), fill=(255, 255, 255, 60), width=2)
-    y += box["gap"] + 2
+
+    # 划线：与图标垂直中心对齐，从图标右缘延伸到右侧安全区
+    draw.line((RULE_X0, geo["rule_y"], PANEL_RIGHT, geo["rule_y"]),
+              fill=RULE_COLOR, width=2)
+
+    y = geo["rule_y"] + box["gap"] + 2
     for line in box["dst_lines"]:
-        draw.text((x, y), line, font=box["dst_font"], fill=FINAL_COLOR)
+        draw.text((x, y), line, font=box["dst_font"], fill=FINAL_COLOR,
+                  stroke_width=stroke, stroke_fill=STROKE_FILL)
         y += box["dst_lh"]
 
-    logo = Image.open(logo_path).convert("RGBA").resize((ICON, ICON), Image.LANCZOS)
-    canvas.alpha_composite(logo, (ICON_X, OUT_H - ICON_BOTTOM - ICON))
+    logo = _load_logo(logo_path)
+    canvas.alpha_composite(logo, (ICON_X, geo["icon_top"]))
     canvas.convert("RGB").save(out_path, "PNG")
 
 
@@ -362,40 +387,97 @@ def _ffmpeg() -> str:
     return exe
 
 
+def _ffprobe() -> str:
+    exe = shutil.which("ffprobe")
+    if not exe:
+        raise VideoError("找不到 ffprobe（通常随 ffmpeg 一起安装）")
+    return exe
+
+
+def probe_duration(path: str) -> float:
+    """读取媒体时长（秒）；失败返回 0。"""
+    proc = subprocess.run(
+        [_ffprobe(), "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", path],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        return 0.0
+    try:
+        return float(proc.stdout.decode("utf-8", "replace").strip())
+    except ValueError:
+        return 0.0
+
+
 def _concat_line(path: str) -> str:
     return "file '%s'\n" % path.replace("\\", "/").replace("'", "'\\''")
 
 
-def encode_slideshow(frames, duration: float, out_path: str,
-                     fps: int = FPS_DEFAULT, audio: bool = True) -> None:
-    """把若干张 PNG 按每张 `duration` 秒编码为 H.264 MP4。"""
+def encode_slideshow(frames, durations, out_path: str, fps: int = FPS_DEFAULT) -> None:
+    """把若干张 PNG 按各自时长编码为**无音轨**的 H.264 MP4。"""
     if not frames:
         raise VideoError("没有可编码的帧")
+    if not isinstance(durations, (list, tuple)):
+        durations = [durations] * len(frames)
+    if len(durations) != len(frames):
+        raise VideoError("帧数与时长数不一致")
     ffmpeg = _ffmpeg()
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="story-tr-video-") as td:
         listing = os.path.join(td, "frames.txt")
         with open(listing, "w", encoding="utf-8") as f:
-            for p in frames:
-                f.write(_concat_line(p))
-                f.write("duration %.3f\n" % duration)
+            for path, dur in zip(frames, durations):
+                f.write(_concat_line(path))
+                f.write("duration %.3f\n" % dur)
             f.write(_concat_line(frames[-1]))  # 末尾再列一次，保证最后一屏时长生效
 
-        cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-               "-f", "concat", "-safe", "0", "-i", listing]
-        if audio:
-            cmd += ["-f", "lavfi", "-i",
-                    "anullsrc=channel_layout=stereo:sample_rate=48000"]
-        cmd += ["-vf", "fps=%d,format=yuv420p" % fps,
-                "-c:v", "libx264", "-profile:v", "high",
-                "-b:v", VIDEO_BITRATE, "-maxrate", "12M", "-bufsize", "20M",
-                "-g", str(fps * 2), "-keyint_min", str(fps * 2), "-sc_threshold", "0"]
-        if audio:
-            cmd += ["-c:a", "aac", "-b:a", AUDIO_BITRATE, "-ar", "48000", "-ac", "2",
-                    "-shortest"]
-        cmd += ["-t", "%.3f" % (len(frames) * duration),
-                "-movflags", "+faststart", out_path]
-        _run(cmd)
+        _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+              "-f", "concat", "-safe", "0", "-i", listing,
+              "-vf", "fps=%d,format=yuv420p" % fps,
+              "-c:v", "libx264", "-profile:v", "high",
+              "-b:v", VIDEO_BITRATE, "-maxrate", "12M", "-bufsize", "20M",
+              "-g", str(fps * 2), "-keyint_min", str(fps * 2), "-sc_threshold", "0",
+              "-t", "%.3f" % sum(durations),
+              "-movflags", "+faststart", out_path])
+
+
+def build_audio_track(audio_paths, durations, out_path: str) -> None:
+    """按段落时长生成音轨：有语音的补静音到该段时长，没有的整段填静音。"""
+    if len(audio_paths) != len(durations):
+        raise VideoError("音频数与时长数不一致")
+    ffmpeg = _ffmpeg()
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="story-tr-audio-") as td:
+        parts = []
+        for i, (path, dur) in enumerate(zip(audio_paths, durations), 1):
+            part = os.path.join(td, "aud_%03d.m4a" % i)
+            if path:
+                cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                       "-i", path, "-af", "apad=whole_dur=%.3f" % dur,
+                       "-t", "%.3f" % dur]
+            else:
+                cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                       "-f", "lavfi", "-i",
+                       "anullsrc=channel_layout=stereo:sample_rate=48000",
+                       "-t", "%.3f" % dur]
+            cmd += ["-c:a", "aac", "-b:a", AUDIO_BITRATE, "-ar", "48000", "-ac", "2", part]
+            _run(cmd)
+            parts.append(part)
+
+        listing = os.path.join(td, "audio.txt")
+        with open(listing, "w", encoding="utf-8") as f:
+            for p in parts:
+                f.write(_concat_line(p))
+        _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+              "-f", "concat", "-safe", "0", "-i", listing,
+              "-c", "copy", out_path])
+
+
+def mux_audio(video_path: str, audio_path: str, out_path: str) -> None:
+    """把音轨合入视频（视频流直接 copy）。"""
+    _run([_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
+          "-i", video_path, "-i", audio_path,
+          "-c:v", "copy", "-c:a", "copy", "-shortest",
+          "-movflags", "+faststart", out_path])
 
 
 def concat_videos(inputs, out_path: str) -> None:
@@ -424,16 +506,67 @@ def _run(cmd) -> None:
 # --------------------------------------------------------------------------- #
 # 生成
 # --------------------------------------------------------------------------- #
+def prepare_audio(char_id: str, story: str, items, base_duration: float = DURATION_DEFAULT,
+                  refresh: bool = False, proxies=None):
+    """为每段准备 TTS（朗读译文），返回 `(audio_paths, durations, total)`。
+
+    - 缓存命中则直接复用；`refresh=True` 时重新生成
+    - 某段生成失败 → 该段退回静音（时长取 `base_duration`），不中断整条视频
+    - 成功时该段时长 = `max(base_duration, 语音时长 + 0.4s)`
+    """
+    from . import chain as tc
+
+    paths, durations = [], []
+    for item in items:
+        path = os.path.join(audio_dir(char_id, story), "seg_%02d.mp3" % item["index"])
+        if refresh or not os.path.isfile(path) or os.path.getsize(path) == 0:
+            try:
+                data = tc.google_tts_bytes(item["final"], tc.TARGET_ZH, proxies)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as f:
+                    f.write(data)
+            except Exception as exc:  # noqa: BLE001 - 单段失败不影响整条视频
+                report.emit("警告：%s/%s/seg_%02d 语音生成失败（%s），该段静音；"
+                            "若需代理请加 --proxy 或在 .env 设置 HTTPS_PROXY"
+                            % (char_id, story, item["index"], exc))
+                paths.append(None)
+                durations.append(float(base_duration))
+                continue
+        dur = probe_duration(path)
+        if dur <= 0:
+            paths.append(None)
+            durations.append(float(base_duration))
+            continue
+        paths.append(path)
+        durations.append(max(float(base_duration), dur + 0.4))
+    return paths, durations, sum(durations)
+
+
 def render_story(char_id: str, story: str, items, image: str, out_path: str,
-                 duration: float, fps: int, logo: str, audio: bool = True) -> None:
-    """一个故事 = 每段一帧，按时长编码为一条视频。"""
+                 duration: float, fps: int, logo: str, audio: bool = True,
+                 audio_paths=None, durations=None) -> float:
+    """一个故事 = 每段一帧；返回总时长（秒）。
+
+    `audio=True` 时先编码无音轨视频，再合入音轨（`audio_paths[i]` 为空则该段静音）。
+    """
+    if durations is None:
+        durations = [float(duration)] * len(items)
     with tempfile.TemporaryDirectory(prefix="story-tr-frames-") as td:
         frames = []
         for item in items:
             frame = os.path.join(td, "seg_%02d.png" % item["index"])
             render_frame(image, logo, item["source"], item["final"], frame)
             frames.append(frame)
-        encode_slideshow(frames, duration, out_path, fps=fps, audio=audio)
+
+        if audio:
+            track = os.path.join(td, "audio.m4a")
+            build_audio_track(audio_paths or [None] * len(items), durations, track)
+            silent = os.path.join(td, "video.mp4")
+            encode_slideshow(frames, durations, silent, fps=fps)
+            mux_audio(silent, track, out_path)
+        else:
+            encode_slideshow(frames, durations, out_path, fps=fps)
+    return sum(durations)
 
 
 def _human(size: int) -> str:
@@ -479,7 +612,15 @@ def add_parser(sub):
     g.add_argument("--logo", default="",
                    help="logo 路径（默认 assets/translate-logo.webp）")
     g.add_argument("--overwrite", action="store_true", help="已有 mp4 也重新生成")
-    g.add_argument("--no-audio", action="store_true", help="不添加静音音轨")
+
+    g = p.add_argument_group("音频")
+    g.add_argument("--no-tts", action="store_true",
+                   help="不生成语音（保留静音音轨）")
+    g.add_argument("--no-audio", action="store_true", help="完全不添加音轨")
+    g.add_argument("--refresh-audio", action="store_true",
+                   help="重新生成 TTS（默认复用 result/video/audio/ 缓存）")
+    g.add_argument("--proxy", default="",
+                   help="代理地址（覆盖 .env 的 HTTPS_PROXY/HTTP_PROXY）")
 
     g = p.add_argument_group("不完整结果")
     g.add_argument("--allow-partial", action="store_true",
@@ -516,6 +657,12 @@ def main(args) -> int:
         return 1
     _pil()  # 尽早给出依赖错误
     _ffmpeg()
+    speech = not args.no_tts and not args.no_audio
+    proxies = None
+    if speech:
+        from . import chain as tc
+
+        proxies = tc.build_cfg(args).get("proxies")
 
     names = [s.strip() for s in args.stories.split(",") if s.strip()] or None
 
@@ -547,13 +694,23 @@ def main(args) -> int:
         if os.path.exists(out) and not args.overwrite:
             print("跳过（已存在）%s" % stories.rel(out))
             continue
+
+        audio_paths, durations = None, None
+        if speech:
+            audio_paths, durations, total_dur = prepare_audio(
+                cid, story, chk["items"], args.duration,
+                refresh=args.refresh_audio, proxies=proxies)
+        else:
+            total_dur = len(chk["items"]) * args.duration
+
         render_story(cid, story, chk["items"], chk["image"], out,
                      duration=args.duration, fps=args.fps, logo=logo,
-                     audio=not args.no_audio)
+                     audio=not args.no_audio, audio_paths=audio_paths,
+                     durations=durations)
         if not args.quiet:
             print("生成 %s  %d 段 / %.1fs / %s"
-                  % (stories.rel(out), len(chk["items"]),
-                     len(chk["items"]) * args.duration, _human(os.path.getsize(out))))
+                  % (stories.rel(out), len(chk["items"]), total_dur,
+                     _human(os.path.getsize(out))))
 
     # ---- 总视频 ----
     if args.only in ("total", "both"):

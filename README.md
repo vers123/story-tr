@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.14.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.15.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -592,7 +592,8 @@ result/video/
 ├─ character_details.mp4     # 每个故事一条（段内按顺序，每段一屏）
 ├─ character_story_1.mp4
 ├─ …
-└─ 10000021.mp4              # 各故事按剧情顺序无损拼接
+├─ 10000021.mp4              # 各故事按剧情顺序无损拼接
+└─ audio/<story>/seg_NN.mp3  # TTS 缓存（重复生成时复用）
 ```
 
 | 参数 | 说明 |
@@ -600,24 +601,30 @@ result/video/
 | `char_ids` / `--all-characters` | 同 `translate` |
 | `--stories` | 只处理指定故事，逗号分隔 |
 | `--only story\|total\|both` | 只出分故事 / 只出总视频 / 两者（默认 `both`） |
-| `--duration` | 每段停留秒数（默认 `3.0`） |
+| `--duration` | 每段**最短**停留秒数（默认 `3.0`；有语音时以语音时长为准） |
 | `--fps` | 帧率（默认 `30`） |
 | `--logo` | logo 路径（默认 `assets/translate-logo.webp`） |
 | `--overwrite` | 已有 mp4 也重新生成（默认跳过） |
-| `--no-audio` | 不添加静音音轨 |
+| `--no-tts` | 不生成语音（保留静音音轨） |
+| `--no-audio` | 完全不添加音轨 |
+| `--refresh-audio` | 重新生成 TTS（默认复用 `result/video/audio/` 缓存） |
+| `--proxy` | 代理地址（覆盖 `.env` 的 `HTTPS_PROXY` / `HTTP_PROXY`） |
 | `--allow-partial` | 缺少部分段落时用已有段落生成（默认跳过该故事） |
 | `--strict` | 任一故事不完整就整体失败，不生成任何文件 |
 | `-q` / `--verbose` | 控制台详略 |
 
-版式（1920×1080）：背景为 `profile/story/<story>/<story>.png`（压暗 25%），左下角 logo（120×120），右下角两个文本块（上＝原文白色，下＝译文暖黄）；自动换行 + 自动缩放（54→24 px，仍放不下则截断并加 `…`），并做简化的中文**避头尾**（标点不出现在行首）。
+版式（1920×1080）：背景为 `profile/story/<story>/<story>.png`（**不压暗、不加底板**，完整露出）；文字用「白色原文 / 暖黄译文 + 黑色描边」，自动换行 + 自动缩放（54→24 px，仍放不下则截断并加 `…`），并做简化的中文**避头尾**。左下角 logo（120×120，自动裁掉透明留白），**图标垂直中心与划线对齐**；划线从图标右缘一直延伸到右侧安全区，原文在线上、译文在线下。
 
-B 站规格：H.264 High / yuv420p / 30 fps / 10 Mbps / GOP 2s / MP4 `faststart` / 静音 AAC 320 kbps 48 kHz 立体声。
+音频：默认用 **gTTS 朗读译文**，每段时长 = `max(--duration, 语音时长 + 0.4s)`；语音缓存在 `result/video/audio/<story>/seg_NN.mp3`。gTTS 需要能访问 `translate.google.com` —— 需要代理时加 `--proxy http://127.0.0.1:10808` 或在 `.env` 填 `HTTPS_PROXY` / `HTTP_PROXY`；单段失败会退回静音并告警，不中断整条视频。
+
+B 站规格：H.264 High / yuv420p / 30 fps / 10 Mbps / GOP 2s / MP4 `faststart` / AAC 320 kbps 48 kHz 立体声（`--no-audio` 时无音轨）。
 
 行为说明：
 
 - **只读翻译结果**：只读 `result/<story>/seg_*.json`，**不读写** `.translate_stories_state.json`，也不改动任何翻译产物 —— 不会影响仍在进行的翻译进度
 - **完整性校验**：逐段检查 `seg_NN.json` 是否存在、`source` 是否与当前 `zh.md` 一致、`final` 是否为空；不完整的故事**跳过并告警**，总视频只合并已完成的故事
 - **总视频**：直接拼接已生成的单故事 mp4（编码参数一致，`-c copy`，不二次损失）；若某条缺失会先补生成
+- **音画同步**：每段音轨都会补齐/裁剪到该段画面时长，再按顺序拼接
 - 之后若重跑了翻译，重跑一次 `story-tr video` 即可更新视频（默认跳过已有文件，需更新时加 `--overwrite`）
 
 ## MCP Server
