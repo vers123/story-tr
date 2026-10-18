@@ -2,6 +2,18 @@
 
 版本号遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)；递增规则与「初始开发阶段（`0.y.z`）」说明见 [README · 版本与变更](README.md#版本与变更)。
 
+## 0.14.0（2026-10-11）
+
+- **新增**：`story-tr video` —— 把已有翻译结果渲染成「谷歌翻译 N 次」风格的视频，按 **B 站投稿规格**输出（1920×1080 / H.264 High / yuv420p / 30 fps / 10 Mbps / GOP 2s / MP4 `faststart` / 静音 AAC 320 kbps 48 kHz 立体声）
+  - 每个故事一条 `<story>.mp4`（每段一屏、段间硬切），再把各故事按剧情顺序**无损拼接**为 `<char_id>.mp4`
+  - 版式：截图背景（压暗 25%）+ 左下角 logo（`assets/translate-logo.webp`，120×120）+ 右下角「原文 / 译文」两个文本块（白色 / 暖黄）；自动换行 + 自动缩放（54→24 px，仍放不下则截断并加 `…`），并做简化的中文**避头尾**（标点不出现在行首）
+  - **只读**翻译结果：不读写 `.translate_stories_state.json`、不改动任何 `seg_*.json` / mp3 —— 不影响仍在进行的翻译进度
+  - 完整性校验（缺段 / `source` 与 `zh.md` 不一致 / 译文为空）：默认**跳过该故事并告警**；`--allow-partial`、`--strict` 可覆盖；总视频只合并已完成的故事
+  - 已有 mp4 默认跳过，`--overwrite` 重新生成；支持 `--only story|total|both`、`--duration`、`--fps`、`--logo`、`--no-audio`
+  - 可选依赖 `.[video]`（Pillow，HPND 宽松许可）；编码调用系统 **ffmpeg**（需在 `PATH`）
+- **文档**：README 新增「`story-tr video`」一节、安装说明与依赖表；目录结构补 `video.py` / `assets/`
+- **工程**：新增 `tests/test_video.py`（故事顺序、完整性校验、避头尾、自动缩放/截断、端到端编码）
+
 ## 0.13.2（2026-10-11）
 
 - **修复**：整段只有 `……` 的**纯符号段落**会让 `langdetect` 抛 `LangDetectException: No features in text.`，**整批翻译直接中断**（GUI 表现为「退出码 -1 / 异常（见日志）」，CLI 表现为异常退出）。全库共 **83 处**这种段落（如 `10000020 / vision` 的第 9 段）

@@ -33,6 +33,8 @@ dev = ["build", "twine", "ruff", "pytest"]
 mcp = ["mcp>=2.0,<3; python_version >= '3.10'"]
 # PySide6 桌面界面
 gui = ["PySide6>=6.5"]
+# 视频合成（Pillow 负责逐帧排版；编码调用系统 ffmpeg）
+video = ["Pillow>=9"]
 
 [project.scripts]
 story-tr = "story_tr.cli:main"

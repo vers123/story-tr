@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""story-tr 命令行入口：子命令 `fetch` / `folders` / `clean` / `chain` / `translate`。"""
+"""story-tr 命令行入口：子命令 `fetch` / `folders` / `clean` / `chain` / `translate` / `video`。"""
 from __future__ import annotations
 
 import argparse
@@ -11,7 +11,7 @@ from . import __version__, paths
 
 def build_parser() -> argparse.ArgumentParser:
     """构建完整解析器（调用时各子模块会按已定的工作目录完成导入）。"""
-    from . import chain, clean, folders, stories, sync
+    from . import chain, clean, folders, stories, sync, video
 
     p = argparse.ArgumentParser(
         prog="story-tr",
@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     chain.add_parser(sub)
     stories.add_parser(sub)
     clean.add_parser(sub)
+    video.add_parser(sub)
     return p
 
 

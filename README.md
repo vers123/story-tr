@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.13.2`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.14.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -60,6 +60,8 @@ python main.py --help                  # 也可 python -m story_tr / python scri
 > **MCP Server（可选）**：如需把项目接入 MCP 客户端，额外安装可选依赖：`pip install -e ".[mcp]"`（官方 `mcp` SDK **需 Python ≥3.10**）。安装后提供命令 **`story-tr-mcp`**（等价 `python -m story_tr.mcp`），详见 **[docs/mcp.md](docs/mcp.md)**。
 >
 > **桌面界面（可选）**：`pip install -e ".[gui]"`（PySide6）后提供命令 **`story-tr-gui`**（等价 `python -m story_tr.gui`），详见「[桌面界面（GUI）](#桌面界面gui)」。
+>
+> **视频合成（可选）**：`pip install -e ".[video]"`（Pillow）后可用 `story-tr video`；另需系统 **ffmpeg** 在 `PATH` 中，详见「[`story-tr video`](#story-tr-video)」。
 
 > **venv 下命令不在 PATH**：需先激活，或写全路径 `.venv\Scripts\story-tr.exe`（macOS/Linux 为 `.venv/bin/story-tr`）。
 
@@ -209,6 +211,7 @@ story-tr fetch --refresh
 │   ├── chain.py                        # story-tr chain（翻译链核心）
 │   ├── stories.py                      # story-tr translate（批量翻译）
 │   ├── clean.py                        # story-tr clean（清理 result/）
+│   ├── video.py                        # story-tr video（「谷歌翻译 N 次」视频，需可选依赖 + ffmpeg）
 │   ├── mcp/                            # story-tr-mcp（MCP Server；需可选依赖）
 │       ├── server.py                   # Tool / Resource 注册 + stdio 运行
 │       ├── tools.py                    # Tool 函数（不依赖 mcp）
@@ -218,6 +221,7 @@ story-tr fetch --refresh
 │       ├── app.py                      # 主窗口：窗口级工具条 + 四个页签 + 可折叠日志面板
 │       ├── runner.py                   # QThread 执行核心 + 日志转发到界面
 │       └── argv.py                     # 表单 → CLI 参数（不依赖 PySide6）
+├── assets/                             # 固定素材（translate-logo.webp，随仓库提交）
 ├── scripts/                            # 兼容入口（转发到包内实现）
 │   ├── sync_from_site.py               # = story-tr fetch
 │   ├── sync_story_folders.py           # = story-tr folders
@@ -572,6 +576,50 @@ story-tr clean --all-characters --dry-run
 - **默认同步清理**状态记录：移除 `.translate_stories_state.json` 中对应的 `id|story|key` 条目，并**重置批次签名** —— 否则重跑 `translate` 会把这些任务当成「已完成」而跳过，或因签名不一致要求 `--reset`；`--keep-state` 可保留
 - 角色选择语义与 `story-tr translate` 完全一致（含范围内不存在 id 的跳过提示）
 
+### `story-tr video`
+
+把已有翻译结果渲染成「谷歌翻译 N 次」风格的视频，按 **B 站投稿规格**输出。
+
+```bash
+pip install -e ".[video]"      # Pillow（另需系统 ffmpeg 在 PATH 中）
+story-tr video 10000021        # 8 条故事视频 + 1 条合并视频
+```
+
+输出（`data/story/character/<id>/result/video/`）：
+
+```text
+result/video/
+├─ character_details.mp4     # 每个故事一条（段内按顺序，每段一屏）
+├─ character_story_1.mp4
+├─ …
+└─ 10000021.mp4              # 各故事按剧情顺序无损拼接
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `char_ids` / `--all-characters` | 同 `translate` |
+| `--stories` | 只处理指定故事，逗号分隔 |
+| `--only story\|total\|both` | 只出分故事 / 只出总视频 / 两者（默认 `both`） |
+| `--duration` | 每段停留秒数（默认 `3.0`） |
+| `--fps` | 帧率（默认 `30`） |
+| `--logo` | logo 路径（默认 `assets/translate-logo.webp`） |
+| `--overwrite` | 已有 mp4 也重新生成（默认跳过） |
+| `--no-audio` | 不添加静音音轨 |
+| `--allow-partial` | 缺少部分段落时用已有段落生成（默认跳过该故事） |
+| `--strict` | 任一故事不完整就整体失败，不生成任何文件 |
+| `-q` / `--verbose` | 控制台详略 |
+
+版式（1920×1080）：背景为 `profile/story/<story>/<story>.png`（压暗 25%），左下角 logo（120×120），右下角两个文本块（上＝原文白色，下＝译文暖黄）；自动换行 + 自动缩放（54→24 px，仍放不下则截断并加 `…`），并做简化的中文**避头尾**（标点不出现在行首）。
+
+B 站规格：H.264 High / yuv420p / 30 fps / 10 Mbps / GOP 2s / MP4 `faststart` / 静音 AAC 320 kbps 48 kHz 立体声。
+
+行为说明：
+
+- **只读翻译结果**：只读 `result/<story>/seg_*.json`，**不读写** `.translate_stories_state.json`，也不改动任何翻译产物 —— 不会影响仍在进行的翻译进度
+- **完整性校验**：逐段检查 `seg_NN.json` 是否存在、`source` 是否与当前 `zh.md` 一致、`final` 是否为空；不完整的故事**跳过并告警**，总视频只合并已完成的故事
+- **总视频**：直接拼接已生成的单故事 mp4（编码参数一致，`-c copy`，不二次损失）；若某条缺失会先补生成
+- 之后若重跑了翻译，重跑一次 `story-tr video` 即可更新视频（默认跳过已有文件，需更新时加 `--overwrite`）
+
 ## MCP Server
 
 把项目接入支持 **MCP**（Model Context Protocol）的客户端（Trae / Claude Desktop / Cursor 等），让模型直接查询角色、故事与翻译结果，并可**触发**翻译/抓取等长任务。
@@ -660,13 +708,21 @@ story-tr-gui                 # 等价：python -m story_tr.gui
 | --- | --- | --- |
 | [PySide6](https://doc.qt.io/qtforpython/) | 桌面界面（Qt for Python，官方绑定） | LGPL-3.0 / 商业双许可 |
 
+可选依赖（**视频合成**，`pip install -e ".[video]"`）：
+
+| 依赖 | 用途 | 许可 |
+| --- | --- | --- |
+| [Pillow](https://python-pillow.org/) | 逐帧合成与中文排版（编码调用系统 ffmpeg） | HPND（宽松） |
+
+> 视频编码使用系统 **ffmpeg**（需在 `PATH` 中，建议含 `libx264`）；它不是 Python 依赖，不参与 pip 安装。
+
 > 说明：`beautifulsoup4` 为 `deep-translator` 的**传递依赖**（MIT），由 pip 自动安装，无需单独声明。
 
 > **核心依赖**选型原则：优先 **MIT / BSD / Apache-2.0** 等宽松许可，且**不引入 GPL / LGPL 的库**（例如 `edge-tts` 为 GPLv3 / LGPLv3，与 MIT 项目不兼容），以免给核心库带来传染性义务。
 
 > **关于可选 GUI 依赖 `PySide6`（LGPL-3.0）**：`PySide6`（Qt for Python）采用 **LGPL-3.0**，另有商业授权可选。它**不属于核心依赖**，只有显式执行 `pip install "story-tr[gui]"` 才会安装；核心库（`pip install story-tr`）由清一色宽松许可的依赖构成。对 LGPL 组件的使用方式为**动态链接、不修改 Qt 源码**，Qt 以独立库形式存在且用户可自行替换其版本 —— 符合 LGPL-3.0「允许替换被链接库」的要求，因此不与本项目的 MIT 许可冲突。若所在组织对 LGPL 另有约束，可不安装该额外项，仅使用 CLI 与 MCP。
 
-> 开发与测试：`pip install -e ".[dev,mcp,gui]"` → `ruff check .` + `pytest`。测试按依赖**自动分层跳过** —— 未装 `mcp` / `PySide6` 时相关用例自动跳过，因此基础测试在任意环境都能跑。
+> 开发与测试：`pip install -e ".[dev,mcp,gui,video]"` → `ruff check .` + `pytest`。测试按依赖**自动分层跳过** —— 未装 `mcp` / `PySide6` / `Pillow` 或没有 `ffmpeg` 时相关用例自动跳过，因此基础测试在任意环境都能跑。
 > CI（`.github/workflows/ci.yml`）：`test` job 在 Python 3.9 / 3.11 / 3.13 上装 `[dev,mcp]` 跑 ruff + pytest；`gui` job 只在 **3.13** 上装 `[dev,gui]`，并以 `QT_QPA_PLATFORM=offscreen` 离屏跑 GUI 测试（PySide6 约 200MB，不铺满矩阵）。
 
 ## 版本与变更
