@@ -186,18 +186,23 @@ class JobManager:
                         proc.wait()
                     with self._lock:
                         job.state = "cancelled"
+                        job.finished_at = _now()
                 else:
                     with self._lock:
                         job.state = "succeeded" if proc.returncode == 0 else "failed"
+                        job.finished_at = _now()
                 job.returncode = proc.returncode
         except OSError as exc:
-            job.state = "failed"
-            job.error = str(exc)
+            with self._lock:
+                job.state = "failed"
+                job.error = str(exc)
+                job.finished_at = _now()
         finally:
             job.progress = self._read_progress(job)
             with self._lock:
                 job.proc = None
-                job.finished_at = _now()
+                if job.finished_at is None:  # 兜底：任何路径都要有结束时间
+                    job.finished_at = _now()
 
     @staticmethod
     def _read_progress(job: Job):

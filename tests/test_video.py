@@ -213,6 +213,29 @@ def test_prepare_audio_reuses_cache(tmp_path, monkeypatch):
     assert total == durations[0]
 
 
+def test_prepare_audio_prefers_translation_mp3(tmp_path, monkeypatch):
+    """翻译阶段已有 `result/<story>/seg_NN.mp3` 时应直接复用，零请求、不写视频缓存。"""
+    if not shutil.which("ffmpeg"):
+        pytest.skip("没有 ffmpeg")
+    monkeypatch.setattr(stories, "STORY_ROOT", str(tmp_path))
+    rdir = os.path.join(str(tmp_path), "1", "result", "vision")
+    os.makedirs(rdir, exist_ok=True)
+    translated = os.path.join(rdir, "seg_01.mp3")
+    vid._run([vid._ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
+              "-f", "lavfi", "-i", "anullsrc=channel_layout=mono:sample_rate=24000",
+              "-t", "3.5", "-c:a", "libmp3lame", translated])
+
+    calls = []
+    monkeypatch.setattr("story_tr.chain.google_tts_bytes",
+                        lambda *a, **k: calls.append(1))
+    paths, durations, _ = vid.prepare_audio(
+        "1", "vision", [{"index": 1, "source": "原", "final": "译"}], base_duration=3.0)
+    assert calls == []
+    assert paths == [translated]
+    assert not os.path.exists(vid.audio_sources("1", "vision", 1)[1])  # 未写视频缓存
+    assert 3.8 <= durations[0] <= 4.1
+
+
 def test_prepare_audio_falls_back_to_silence(tmp_path, monkeypatch):
     """单段 TTS 失败时退回静音，不中断整条视频。"""
     monkeypatch.setattr(stories, "STORY_ROOT", str(tmp_path))

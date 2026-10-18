@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.15.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.15.1`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -615,7 +615,7 @@ result/video/
 
 版式（1920×1080）：背景为 `profile/story/<story>/<story>.png`（**不压暗、不加底板**，完整露出）；文字用「白色原文 / 暖黄译文 + 黑色描边」，自动换行 + 自动缩放（54→24 px，仍放不下则截断并加 `…`），并做简化的中文**避头尾**。左下角 logo（120×120，自动裁掉透明留白），**图标垂直中心与划线对齐**；划线从图标右缘一直延伸到右侧安全区，原文在线上、译文在线下。
 
-音频：默认用 **gTTS 朗读译文**，每段时长 = `max(--duration, 语音时长 + 0.4s)`；语音缓存在 `result/video/audio/<story>/seg_NN.mp3`。gTTS 需要能访问 `translate.google.com` —— 需要代理时加 `--proxy http://127.0.0.1:10808` 或在 `.env` 填 `HTTPS_PROXY` / `HTTP_PROXY`；单段失败会退回静音并告警，不中断整条视频。
+音频：默认用 **gTTS 朗读译文**，每段时长 = `max(--duration, 语音时长 + 0.4s)`。语音按以下顺序查找：`result/<story>/seg_NN.mp3`（**翻译阶段已生成，直接复用，零请求**）→ `result/video/audio/<story>/seg_NN.mp3`（视频缓存）→ 现场用 gTTS 生成并写入视频缓存。gTTS 需要能访问 `translate.google.com` —— 需要代理时加 `--proxy http://127.0.0.1:10808` 或在 `.env` 填 `HTTPS_PROXY` / `HTTP_PROXY`；单段失败会优先退回已有语音，其次静音并告警，不中断整条视频。
 
 B 站规格：H.264 High / yuv420p / 30 fps / 10 Mbps / GOP 2s / MP4 `faststart` / AAC 320 kbps 48 kHz 立体声（`--no-audio` 时无音轨）。
 

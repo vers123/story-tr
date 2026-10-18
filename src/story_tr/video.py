@@ -506,32 +506,54 @@ def _run(cmd) -> None:
 # --------------------------------------------------------------------------- #
 # 生成
 # --------------------------------------------------------------------------- #
+def audio_sources(char_id: str, story: str, index: int):
+    """该段可用的语音，按优先级返回：翻译阶段 mp3 → 视频缓存 mp3。"""
+    _, _, translated = stories.result_paths(char_id, story, "seg_%02d" % index)
+    cached = os.path.join(audio_dir(char_id, story), "seg_%02d.mp3" % index)
+    return translated, cached
+
+
 def prepare_audio(char_id: str, story: str, items, base_duration: float = DURATION_DEFAULT,
                   refresh: bool = False, proxies=None):
-    """为每段准备 TTS（朗读译文），返回 `(audio_paths, durations, total)`。
+    """为每段准备语音，返回 `(audio_paths, durations, total)`。
 
-    - 缓存命中则直接复用；`refresh=True` 时重新生成
-    - 某段生成失败 → 该段退回静音（时长取 `base_duration`），不中断整条视频
+    语音查找顺序：
+    1. `result/<story>/seg_NN.mp3` —— 翻译阶段已生成的语音（直接复用，零请求）
+    2. `result/video/audio/<story>/seg_NN.mp3` —— 视频自己的缓存
+    3. 都没有（或 `refresh=True`）→ 调 gTTS 生成到视频缓存
+
+    - 某段生成失败 → 优先退回已有语音，再退回静音（时长取 `base_duration`）
     - 成功时该段时长 = `max(base_duration, 语音时长 + 0.4s)`
     """
     from . import chain as tc
 
     paths, durations = [], []
     for item in items:
-        path = os.path.join(audio_dir(char_id, story), "seg_%02d.mp3" % item["index"])
-        if refresh or not os.path.isfile(path) or os.path.getsize(path) == 0:
+        translated, cached = audio_sources(char_id, story, item["index"])
+        existing = [p for p in (translated, cached)
+                    if os.path.isfile(p) and os.path.getsize(p) > 0]
+
+        path = None if refresh else (existing[0] if existing else None)
+        if path is None:
             try:
                 data = tc.google_tts_bytes(item["final"], tc.TARGET_ZH, proxies)
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "wb") as f:
+                os.makedirs(os.path.dirname(cached), exist_ok=True)
+                with open(cached, "wb") as f:
                     f.write(data)
+                path = cached
             except Exception as exc:  # noqa: BLE001 - 单段失败不影响整条视频
-                report.emit("警告：%s/%s/seg_%02d 语音生成失败（%s），该段静音；"
-                            "若需代理请加 --proxy 或在 .env 设置 HTTPS_PROXY"
-                            % (char_id, story, item["index"], exc))
-                paths.append(None)
-                durations.append(float(base_duration))
-                continue
+                if existing:
+                    report.emit("警告：%s/%s/seg_%02d 重新合成失败（%s），改用已有语音"
+                                % (char_id, story, item["index"], exc))
+                    path = existing[0]
+                else:
+                    report.emit("警告：%s/%s/seg_%02d 语音生成失败（%s），该段静音；"
+                                "若需代理请加 --proxy 或在 .env 设置 HTTPS_PROXY"
+                                % (char_id, story, item["index"], exc))
+                    paths.append(None)
+                    durations.append(float(base_duration))
+                    continue
+
         dur = probe_duration(path)
         if dur <= 0:
             paths.append(None)
