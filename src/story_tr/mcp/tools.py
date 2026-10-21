@@ -25,6 +25,32 @@ from .. import paths, stories
 
 # 结果明细的合法 key：full / title / seg_NN
 RESULT_KEY_RE = re.compile(r"(?:full|title|seg_\d+)")
+# 路径片段白名单：角色 id / 故事文件夹名（现有数据均为 slug）
+SAFE_PART_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+def safe_part(value, field="参数"):
+    """校验单个路径片段，拒绝 `..`、分隔符、绝对路径与空串。"""
+    if (not isinstance(value, str) or not SAFE_PART_RE.fullmatch(value)
+            or value in (".", "..")):
+        raise ValueError("%s 非法：%r（只允许字母、数字、点、下划线、连字符）" % (field, value))
+    return value
+
+
+def safe_child(base, *parts):
+    """把 `parts` 校验后拼到 `base` 下，并确认结果仍在 `base` 内。"""
+    for p in parts:
+        safe_part(p)
+    base_real = os.path.realpath(base)
+    target = os.path.realpath(os.path.join(base_real, *parts))
+    try:
+        inside = os.path.commonpath([base_real, target]) == base_real
+    except ValueError:  # 不同盘符等
+        inside = False
+    if not inside:
+        raise ValueError("路径越界：%s" % os.path.join(*parts))
+    return target
+
 
 
 # --------------------------------------------------------------------------- #
@@ -46,7 +72,7 @@ def find_character(char_id: str) -> dict:
 
 def profile_story_dir(char_id: str) -> str:
     """角色的**故事源**目录：`{id}/profile/story`。"""
-    return os.path.join(stories.STORY_ROOT, char_id, "profile", "story")
+    return safe_child(stories.STORY_ROOT, char_id, "profile", "story")
 
 
 def read_json(path: str):
@@ -70,6 +96,7 @@ def list_stories(char_id: str) -> list[dict]:
     base = profile_story_dir(char_id)
     out = []
     for story in char.get("stories") or []:
+        safe_part(story, "story")
         zh = os.path.join(base, story, "zh.md")
         en = os.path.join(base, story, "en.md")
         if not os.path.exists(zh):
@@ -83,6 +110,8 @@ def list_stories(char_id: str) -> list[dict]:
 
 def get_result_summary(char_id: str, story: str) -> dict:
     """翻译结果**概要**：读取 `result/{story}/segments.json`（标题 / 全文 / 各段的源文与最终译文）。"""
+    safe_part(char_id, "char_id")
+    safe_part(story, "story")
     path = os.path.join(stories.story_dir(char_id), story, "segments.json")
     if not os.path.exists(path):
         raise FileNotFoundError(
@@ -95,6 +124,8 @@ def read_result_item(char_id: str, story: str, key: str) -> dict:
     """翻译结果**明细**：key 取 `full` / `title` / `seg_NN`。"""
     if not RESULT_KEY_RE.fullmatch(key):
         raise ValueError("key 只能是 full / title / seg_NN（如 seg_01）：%s" % key)
+    safe_part(char_id, "char_id")
+    safe_part(story, "story")
     path = os.path.join(stories.story_dir(char_id), story, key + ".json")
     if not os.path.exists(path):
         raise FileNotFoundError("结果不存在：%s/%s/%s.json" % (char_id, story, key))
@@ -247,7 +278,7 @@ def clean(char_ids: str, stories_filter: str = "", dry_run: bool = True,
     ids, missing = parse_char_ids(char_ids, stories.load_char_ids())
     if not ids:
         raise ValueError("没有匹配到任何角色 id：%s" % char_ids)
-    names = [s.strip() for s in stories_filter.split(",") if s.strip()] or None
+    names = [safe_part(s.strip(), "story") for s in stories_filter.split(",") if s.strip()] or None
 
     plan = []
     for cid in ids:

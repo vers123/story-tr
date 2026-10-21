@@ -130,6 +130,9 @@ pip install --no-index --find-links=bundle "story-tr[mcp]"           # 目标机
 > **不含** `--overwrite` / `--reset`。
 >
 > 工具/资源报错会把**原因**透传给客户端（如「未知 job_id：…」「尚无翻译结果：…」），便于模型自我纠正。
+>
+> **路径校验**：`char_id` / `story` / `lang` 只允许字母、数字、`.`、`_`、`-`，拒绝 `..`、路径分隔符与绝对路径；
+> `clean` 的 `stories` 同样校验。`clean` 默认只预览，且默认不会清理 `result/video/`（需显式传 `stories="video"`）。
 
 ## 代码位置
 

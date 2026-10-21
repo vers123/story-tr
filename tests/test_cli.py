@@ -4,7 +4,7 @@ import pytest
 
 from story_tr import __version__, cli
 
-SUBCOMMANDS = ("fetch", "folders", "chain", "translate")
+SUBCOMMANDS = ("fetch", "folders", "chain", "translate", "clean", "video", "status")
 
 
 def test_version(capsys):

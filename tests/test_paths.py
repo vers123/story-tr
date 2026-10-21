@@ -23,6 +23,8 @@ def test_find_upwards(tmp_path, monkeypatch):
 
 def test_fallback_to_cwd(tmp_path, monkeypatch):
     monkeypatch.delenv("STORY_TR_HOME", raising=False)
+    # 测试目录在仓库内，向上会撞到真实的 data/character.json；换一个不存在的标记隔离
+    monkeypatch.setattr(paths, "MARKER", os.path.join("__no_such_dir__", "character.json"))
     monkeypatch.chdir(tmp_path)
     assert paths.home() == os.path.abspath(str(tmp_path))
 

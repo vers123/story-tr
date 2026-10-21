@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.15.1`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.16.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -197,22 +197,27 @@ story-tr fetch --refresh
 │       │       ├── character_story_5/{en,zh}.md
 │       │       ├── {name_1}/{en,zh}.md      # 角色专属剧情（文件夹名为标题 slug）
 │       │       └── {name_2}/{en,zh}.md      # 神之眼 / 邪眼 等
-│       └── result/{story}/               # 由 `story-tr translate` 生成
-│           ├── title.json / title.mp3    # 标题（frontmatter 的 title，如「角色详细」）
-│           ├── full.json / full.mp3      # 全文（源文/语言/逐步/最终译文 + 语音）
-│           ├── seg_01.json / seg_01.mp3  # 各段同结构
-│           └── segments.json             # 汇总
+│       └── result/                        # 由 `story-tr translate` / `video` 生成
+│           ├── {story}/                   # 每篇故事
+│           │   ├── title.json / title.mp3 # 标题（frontmatter 的 title，如「角色详细」）
+│           │   ├── full.json / full.mp3   # 全文（源文/语言/逐步/最终译文 + 语音）
+│           │   ├── seg_01.json / seg_01.mp3  # 各段同结构
+│           │   └── segments.json          # 汇总
+│           └── video/                     # `story-tr video` 产物（mp4 + TTS 缓存）
 ├── src/story_tr/                       # 包源码（CLI 实现）
 │   ├── __init__.py                     # __version__
 │   ├── __main__.py                     # python -m story_tr
 │   ├── cli.py                          # 顶层 CLI（子命令注册）
 │   ├── paths.py                        # 工作目录解析
 │   ├── report.py                       # 控制台输出层（日志上滚、进度条固定底部、-q/--verbose）
+│   ├── statefile.py                    # 状态文件原子写 / 备份 / 损坏恢复
+│   ├── exitcodes.py                    # 统一退出码与文案
 │   ├── sync.py                         # story-tr fetch
 │   ├── folders.py                      # story-tr folders
 │   ├── chain.py                        # story-tr chain（翻译链核心）
 │   ├── stories.py                      # story-tr translate（批量翻译）
 │   ├── clean.py                        # story-tr clean（清理 result/）
+│   ├── status.py                       # story-tr status（只读状态报告）
 │   ├── video.py                        # story-tr video（「谷歌翻译 N 次」视频，需可选依赖 + ffmpeg）
 │   ├── mcp/                            # story-tr-mcp（MCP Server；需可选依赖）
 │       ├── server.py                   # Tool / Resource 注册 + stdio 运行
@@ -231,7 +236,7 @@ story-tr fetch --refresh
 │   └── translate_stories.py            # = story-tr translate
 ├── docs/mcp.md                         # MCP 详细文档（客户端配置 / 分发 / Tools·Resources）
 ├── tests/                              # pytest 单元测试
-├── .github/workflows/ci.yml            # CI：test（ruff + pytest，3.9/3.11/3.13）+ gui（3.13，离屏）
+├── .github/workflows/ci.yml            # CI：test（3.9/3.11/3.13/3.14）+ gui/video（3.13）+ build
 ├── logs/                               # 运行日志 + MCP 子进程日志 logs/mcp_*.log（不入库）
 ├── out/                                # translate_chain 的结果 json/mp3（不入库）
 ├── dist/ / build/                      # python -m build 的产物 *.whl / *.tar.gz（不入库）
@@ -344,7 +349,23 @@ title: "角色详细"
 | `story-tr folders` | 按 `character.json` 的 `stories` 同步重命名故事文件夹 |
 | `story-tr chain [text]` | 单文本「来回翻译 N 次」链路（最后译回中文） |
 | `story-tr translate <id/范围>` | 批量翻译角色故事，结果落入 `{id}/result/`（默认合并请求；`--full-only` 只出全文） |
-| `story-tr clean <id/范围>` | 清理 `{id}/result/` 下的翻译产物（保留 `result/` 目录本身） |
+| `story-tr clean <id/范围>` | 清理 `{id}/result/` 下的翻译产物（保留 `result/` 目录本身；默认不删 `result/video/`） |
+| `story-tr video <id/范围>` | 把翻译结果渲染成「谷歌翻译 N 次」视频（B 站 1080P） |
+| `story-tr status [--json] [--deep]` | 只读报告角色/故事覆盖、结果与语音数量、磁盘占用、批量进度 |
+
+**退出码**（CLI 与 GUI 共用）：
+
+| 码 | 含义 |
+| --- | --- |
+| `0` | 完成 |
+| `1` | 参数或前置条件错误 |
+| `2` | 语言不受支持 |
+| `3` | 批量状态与上次不一致（需 `--reset` 或 `clean`） |
+| `4` | 已暂停（业务错误重试耗尽） |
+| `5` | 所有后端连接失败 |
+| `6` | 已取消（进度已保存） |
+| `7` | 部分任务失败（失败清单已保存，重跑可续） |
+| `8` | 当日配额耗尽（进度已保存，次日续跑） |
 
 ### `story-tr fetch`
 
@@ -461,7 +482,7 @@ story-tr chain --provider baidu
 
 > 实测同批 `10000021/amber_journal`（5 份）：`--min-interval 0.3` ≈ **59s**，`1.0` ≈ **110s**，两者均**零限流**。
 > 并发实测：同批 `--workers 4 --min-interval 0.25` ≈ **34s**（≈1.7×，总速率约 **4 请求/秒**）。
-> 全量估算（现有 `data/`：13,646 份结果 / 974 个故事）：**逐条**约 30 万次调用 → 单线程 ≈45 h、`--workers 4 --min-interval 0.25` ≈21 h；**批量（默认）**约 2.7 万次调用 → **≈2 h**。
+> 全量估算（当前 `data/` 约 1.1 万份结果 / 974 个故事，实际以 `story-tr status` 为准）：**逐条**约 24 万次调用 → 单线程 ≈35 h；**批量（默认）**约 2–3 万次调用 → **≈2 h**。
 
 ### `story-tr translate`
 
@@ -574,13 +595,28 @@ story-tr clean --all-characters --dry-run
 行为说明：
 
 - 只删 `result/` 里的内容，**保留 `{id}/result/` 目录本身**（维持目录结构约定）
+- **默认保留 `result/video/`**（视频与 TTS 缓存体积大）：未指定 `--stories` 时跳过，需要清理时显式 `story-tr clean <id> --stories video`
 - 默认**交互确认**（先列出目录、文件数与占用大小）；`--dry-run` 预览、`-y` 跳过确认
 - **默认同步清理**状态记录：移除 `.translate_stories_state.json` 中对应的 `id|story|key` 条目，并**重置批次签名** —— 否则重跑 `translate` 会把这些任务当成「已完成」而跳过，或因签名不一致要求 `--reset`；`--keep-state` 可保留
 - 角色选择语义与 `story-tr translate` 完全一致（含范围内不存在 id 的跳过提示）
 
+### `story-tr status`
+
+只读报告，不联网、不写文件；用于快速确认“还差多少、磁盘多大、批量进度是什么”：
+
+```bash
+story-tr status            # 人类可读
+story-tr status --json     # 机器可读
+story-tr status --deep     # 额外统计段落源语言分布（需读取全部 seg JSON，较慢）
+```
+
+输出包括：角色/故事覆盖（有结果 / 无结果）、段落 JSON 与 mp3 数量、视频数量与体积、`data/` 与 `logs/` 占用、`.translate_stories_state.json` 的完成数与签名。`--deep` 可用来检查语言判定质量（例如是否还有中文被误判为韩/日）。
+
 ### `story-tr video`
 
 把已有翻译结果渲染成「谷歌翻译 N 次」风格的视频，按 **B 站投稿规格**输出。
+
+> 前置条件：每篇故事需要 `profile/story/<story>/<story>.png` 背景图；缺图会跳过该故事（`--allow-partial` 不会补图）。
 
 ```bash
 pip install -e ".[video]"      # Pillow（另需系统 ffmpeg 在 PATH 中）
@@ -605,6 +641,8 @@ result/video/
 | `--only story\|total\|both` | 只出分故事 / 只出总视频 / 两者（默认 `both`） |
 | `--duration` | 每段**最短**停留秒数（默认 `3.0`；有语音时以语音时长为准） |
 | `--fps` | 帧率（默认 `30`） |
+| `--crf` | 用 CRF 质量控制（0–51，越小越清晰；常见 20–23）；指定后忽略 `--bitrate` |
+| `--bitrate` | 固定码率（默认 `10M`，B 站规格） |
 | `--logo` | logo 路径（默认 `assets/translate-logo.webp`） |
 | `--overwrite` | 已有 mp4 也重新生成（默认跳过） |
 | `--no-tts` | 不生成语音（保留静音音轨） |
@@ -732,7 +770,7 @@ story-tr-gui                 # 等价：python -m story_tr.gui
 > **关于可选 GUI 依赖 `PySide6`（LGPL-3.0）**：`PySide6`（Qt for Python）采用 **LGPL-3.0**，另有商业授权可选。它**不属于核心依赖**，只有显式执行 `pip install "story-tr[gui]"` 才会安装；核心库（`pip install story-tr`）由清一色宽松许可的依赖构成。对 LGPL 组件的使用方式为**动态链接、不修改 Qt 源码**，Qt 以独立库形式存在且用户可自行替换其版本 —— 符合 LGPL-3.0「允许替换被链接库」的要求，因此不与本项目的 MIT 许可冲突。若所在组织对 LGPL 另有约束，可不安装该额外项，仅使用 CLI 与 MCP。
 
 > 开发与测试：`pip install -e ".[dev,mcp,gui,video]"` → `ruff check .` + `pytest`。测试按依赖**自动分层跳过** —— 未装 `mcp` / `PySide6` / `Pillow` 或没有 `ffmpeg` 时相关用例自动跳过，因此基础测试在任意环境都能跑。
-> CI（`.github/workflows/ci.yml`）：`test` job 在 Python 3.9 / 3.11 / 3.13 上装 `[dev,mcp]` 跑 ruff + pytest；`gui` job 只在 **3.13** 上装 `[dev,gui]`，并以 `QT_QPA_PLATFORM=offscreen` 离屏跑 GUI 测试（PySide6 约 200MB，不铺满矩阵）。
+> CI（`.github/workflows/ci.yml`）：`test` job 在 Python 3.9 / 3.11 / 3.13 / 3.14 上装 `[dev,mcp]` 跑 ruff + pytest；`gui` job 只在 **3.13** 上装 `[dev,gui]`，并以 `QT_QPA_PLATFORM=offscreen` 离屏跑 GUI 测试（PySide6 约 200MB，不铺满矩阵）；`video` job 装 `[dev,video]` + `ffmpeg` + `fonts-noto-cjk` 跑视频测试；`build` job 验证 `python -m build` 与 `twine check`。
 
 ## 版本与变更
 

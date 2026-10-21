@@ -39,6 +39,8 @@ def story_markdown(char_id: str, story: str, lang: str) -> str:
     """`story://character/{id}/{story}/{lang}` —— 故事原始 Markdown（保留 frontmatter）。"""
     if lang not in VALID_LANGS:
         raise ValueError("lang 只能是 %s：%s" % (" / ".join(VALID_LANGS), lang))
+    tools.safe_part(char_id, "char_id")
+    tools.safe_part(story, "story")
     path = os.path.join(tools.profile_story_dir(char_id), story, lang + ".md")
     if not os.path.exists(path):
         raise FileNotFoundError("故事文件不存在：%s/%s/%s.md" % (char_id, story, lang))

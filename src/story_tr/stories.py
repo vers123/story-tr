@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import threading
@@ -26,7 +27,10 @@ from datetime import datetime
 from tqdm import tqdm
 
 from . import chain as tc
-from . import paths, report
+from . import paths, report, statefile
+from .exitcodes import ExitCode
+
+log = logging.getLogger("translate_chain")
 
 ROOT = paths.home()
 STORY_ROOT = os.path.join(ROOT, "data", "story", "character")
@@ -92,26 +96,57 @@ def rel(path: str) -> str:
 # 状态
 # --------------------------------------------------------------------------- #
 def load_state():
-    if not os.path.exists(STATE_PATH):
-        return None
-    with open(STATE_PATH, encoding="utf-8") as f:
-        return json.load(f)
+    """读取批量状态；损坏时自动回退 `.bak` 或隔离损坏文件（见 `statefile`）。"""
+    return statefile.load_json_with_backup(STATE_PATH)
 
 
 def save_state(state):
     state["updated_at"] = datetime.now().isoformat(timespec="seconds")
-    with open(STATE_PATH, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+    statefile.atomic_write_json(STATE_PATH, state)
+
+
+def clear_state():
+    """删除状态文件及其备份（正常完成后调用）。"""
+    statefile.remove_with_backup(STATE_PATH)
+
+
+class _StateWriter:
+    """批量状态去抖写入：每 `every` 份结果或 `force` 时落盘一次。
+
+    `mark()` 由持有 `state_lock` 的调用方执行；`flush()` 自己加锁，
+    避免与 worker 线程的 `completed.add` 竞争。
+    """
+
+    def __init__(self, state, completed, lock, every=50):
+        self.state = state
+        self.completed = completed
+        self.lock = lock
+        self.every = max(1, int(every))
+        self._marks = 0
+
+    def mark(self):
+        self._marks += 1
+
+    def flush(self, force=False):
+        with self.lock:
+            if not force and self._marks < self.every:
+                return
+            self.state["completed"] = sorted(self.completed)
+            save_state(self.state)
+            self._marks = 0
 
 
 # --------------------------------------------------------------------------- #
 # 单次链路
 # --------------------------------------------------------------------------- #
-def run_chain_many(texts, languages, providers, cfg, log, extras=None):
+def run_chain_many(texts, languages, providers, cfg, log, extras=None, source_lang=None):
     """多条文本同步走同一条链，返回与 texts 同序的结果 dict 列表。
 
     先按**检出语言**分组（同一分组才能共享每步的 src/tgt），各步用
     `tc.translate_step_many` 推进——是否合并为一次请求由 `tc.translate_many` 决定。
+
+    `source_lang` 是源语言提示（`translate` 传 `zh-CN`）：含汉字的文本直接采用提示，
+    不再逐段调用 langdetect；不含汉字的文本（纯英文引用等）仍走检测。
 
     **无文字内容**（纯标点 / 数字 / 空白，如角色故事里的 `……`）不参与链路：
     既判定不了语言，翻译也没有意义，直接**原样保留**，不发任何请求。
@@ -142,7 +177,10 @@ def run_chain_many(texts, languages, providers, cfg, log, extras=None):
             }
             results[i].update(extras[i])
 
-    dets = [None if trivial[i] else tc.detect_language(texts[i]) for i in range(len(texts))]
+    dets = [None if trivial[i] else
+            (source_lang if source_lang and tc.has_han(texts[i])
+             else tc.detect_language(texts[i]))
+            for i in range(len(texts))]
     for det in dict.fromkeys(d for d in dets if d is not None):
         idx = [i for i, d in enumerate(dets) if d == det]
         started = datetime.now().isoformat(timespec="seconds")
@@ -171,9 +209,10 @@ def run_chain_many(texts, languages, providers, cfg, log, extras=None):
     return results
 
 
-def run_chain(text, languages, providers, cfg, log, extra):
+def run_chain(text, languages, providers, cfg, log, extra, source_lang=None):
     """单条文本跑链路（`run_chain_many` 的兼容封装）。"""
-    return run_chain_many([text], languages, providers, cfg, log, [extra])[0]
+    return run_chain_many([text], languages, providers, cfg, log, [extra],
+                          source_lang=source_lang)[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -259,6 +298,16 @@ def add_parser(sub):
                    help="关闭批量：同一故事的逐段在每步各自发请求（默认合并为一次）")
     g.add_argument("--overwrite", action="store_true", help="已有结果也重跑（默认跳过）")
     g.add_argument("--reset", action="store_true", help="忽略旧批量状态")
+
+    g = p.add_argument_group("可靠性")
+    g.add_argument("--revalidate", action="store_true",
+                   help="跳过已有结果前校验其 source 与当前 zh.md 是否一致（默认只按文件存在跳过）")
+    g.add_argument("--fail-fast", action="store_true",
+                   help="任一任务失败即终止整批（默认记录失败并继续，最后返回退出码 7）")
+    g.add_argument("--max-failures", type=int, default=20,
+                   help="连续失败达到该数量时提前结束（默认 20，仅 --fail-fast 关闭时生效）")
+    g.add_argument("--dry-run", action="store_true",
+                   help="只统计将处理的结果数量与预计步骤调用量，不翻译、不写文件")
     p.set_defaults(func=main)
     return p
 
@@ -420,6 +469,59 @@ def providers_of(result) -> str:
     return "/".join(seen) if len(seen) <= 2 else "%s/…" % seen[0]
 
 
+def result_is_stale(json_path: str, source: str) -> bool:
+    """已有结果是否与当前源文不一致（`--revalidate` 用）。"""
+    try:
+        with open(json_path, encoding="utf-8") as f:
+            row = json.load(f)
+    except (OSError, ValueError):
+        return True
+    return (row.get("source") or "").strip() != (source or "").strip()
+
+
+def write_failures(failures) -> str:
+    """把失败任务写入 `logs/failures_<时间戳>.json`，返回路径。"""
+    os.makedirs(tc.LOG_DIR, exist_ok=True)
+    path = os.path.join(tc.LOG_DIR,
+                        "failures_%s.json" % datetime.now().strftime("%Y%m%d_%H%M%S"))
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(failures, f, ensure_ascii=False, indent=2)
+    return path
+
+
+def _dry_run(args, char_ids) -> int:
+    """打印任务数与预计调用量；不翻译、不写文件。"""
+    languages, label = tc.resolve_languages(args)
+    total = 0
+    active = 0
+
+    def _log():
+        return logging.getLogger("translate_chain")
+
+    for cid in char_ids:
+        base = os.path.join(STORY_ROOT, cid, "profile", "story")
+        names = resolve_stories(args, cid)
+        if not names:
+            continue
+        tasks = build_tasks(base, cid, names, _log(), parts_label(args))
+        if tasks:
+            active += 1
+        total += len(tasks)
+
+    steps_per_item = len(tc.build_tasks("zh-CN", languages))
+    batch = not getattr(args, "no_batch", False) and args.mode != "random"
+    print("--dry-run：角色 %d（有可处理故事 %d），故事 %d，结果 %d 份"
+          % (len(char_ids), active, sum(len(resolve_stories(args, c)) for c in char_ids), total))
+    print("路线：%s（%d 步/份；含 to_en 与 to_zh 共 %d 步）"
+          % (label, len(languages), steps_per_item))
+    print("预计步骤调用：约 %d 次；批量%s（实际请求数会因合并而更少）"
+          % (total * steps_per_item, "开启" if batch else "关闭"))
+    if args.mode == "random":
+        print("注意：random 每份独立随机且自动关闭批量，调用量约为 fixed+批量 的 20 倍，"
+              "全量可能触及 Google 免费端点 20 万/天配额。")
+    return ExitCode.OK
+
+
 def main(args, on_progress=None, cancel=None) -> int:
     """批量翻译入口（CLI 与 GUI 共用）。
 
@@ -429,13 +531,15 @@ def main(args, on_progress=None, cancel=None) -> int:
     """
     if args.char_ids and args.all_characters:
         print("不能同时指定角色 id 与 --all-characters，请二选一。")
-        return 1
+        return ExitCode.USAGE
     if not args.char_ids and not args.all_characters:
         print("请指定角色 id / 范围（如 10000021 或 10000002-10000030），"
               "或用 --all-characters 处理全部角色。")
-        return 1
+        return ExitCode.USAGE
 
-    log, logfile = tc.setup_logging(args.no_file_log, report.console_level(args))
+    log, logfile = tc.setup_logging(
+        args.no_file_log or bool(getattr(args, "dry_run", False)),
+        report.console_level(args))
     cfg = tc.build_cfg(args)
 
     def _notify(**kw):
@@ -458,15 +562,26 @@ def main(args, on_progress=None, cancel=None) -> int:
     char_ids = all_ids if args.all_characters else parse_char_ids(args.char_ids, all_ids)
     if not char_ids:
         print("没有匹配到任何角色 id；请对照 data/character.json 检查。")
-        return 1
+        return ExitCode.USAGE
+    if getattr(args, "dry_run", False):
+        return _dry_run(args, char_ids)
+    if args.mode == "random" and len(char_ids) > 1:
+        log.warning("random 模式为每份结果独立随机，且会关闭批量；调用量约为 "
+                    "fixed+批量 的 20 倍，全量可能触及 Google 免费端点 20 万/天配额。")
 
     sig = signature(args, char_ids)
     state, completed, err = prepare_state(load_state(), sig, args.reset)
     if err:
         print(err)
-        return 3
+        return ExitCode.SIGNATURE
 
     processed = 0
+    failures = []
+    fail_fast = bool(getattr(args, "fail_fast", False))
+    max_failures = max(1, int(getattr(args, "max_failures", 20)))
+    revalidate = bool(getattr(args, "revalidate", False))
+    state_lock = threading.Lock()
+    writer = _StateWriter(state, completed, state_lock)
     outer = tqdm(char_ids, desc="角色", unit="个", position=0,
                  **report.bar_kwargs(len(char_ids) <= 1))
     try:
@@ -488,7 +603,6 @@ def main(args, on_progress=None, cancel=None) -> int:
 
                 done_stories = set()
                 stats = {"n": 0}
-                state_lock = threading.Lock()
 
                 # 批量：同一故事的全部任务为一组（各步同步推进，每步合并为一次请求）
                 grouped = {}
@@ -500,8 +614,12 @@ def main(args, on_progress=None, cancel=None) -> int:
                     """已完成（文件在或状态里有）则记数并返回 True。"""
                     state_key = "%s|%s|%s" % (char_id, task["story"], task["key"])
                     with state_lock:
-                        if not args.overwrite and (os.path.exists(json_path)
-                                                   or state_key in completed):
+                        exists = os.path.exists(json_path)
+                        if exists and revalidate and result_is_stale(json_path, task["text"]):
+                            log.log(report.STEP, "  重新翻译（源文已变化）%s/%s",
+                                    task["story"], task["key"])
+                            exists = False
+                        if not args.overwrite and (exists or state_key in completed):
                             done_stories.add(task["story"])
                             stats["n"] += 1
                             log.log(report.STEP, "  跳过（已有结果）%s/%s",
@@ -524,8 +642,7 @@ def main(args, on_progress=None, cancel=None) -> int:
                                         task["key"], exc)
                     with state_lock:
                         completed.add("%s|%s|%s" % (char_id, task["story"], task["key"]))
-                        state["completed"] = sorted(completed)
-                        save_state(state)
+                        writer.mark()
                         done_stories.add(task["story"])
                         stats["n"] += 1
                     # 每份结果完成一行（--verbose 之外也可见）
@@ -558,12 +675,31 @@ def main(args, on_progress=None, cancel=None) -> int:
                                  ",".join(sorted({t["story"] for t, _, _ in todo})),
                                  " → ".join(languages))
                     t0 = time.monotonic()
-                    if n > 1:
-                        results = run_chain_many([t["text"] for t, _, _ in todo],
-                                                 languages, providers, cfg, log, extras)
-                    else:
-                        results = [run_chain(t["text"], languages, providers, cfg, log,
-                                             extras[0]) for t, _, _ in todo]
+                    try:
+                        if n > 1:
+                            results = run_chain_many([t["text"] for t, _, _ in todo],
+                                                     languages, providers, cfg, log, extras,
+                                                     source_lang="zh-CN")
+                        else:
+                            results = [run_chain(t["text"], languages, providers, cfg, log,
+                                                 extras[0], source_lang="zh-CN")
+                                       for t, _, _ in todo]
+                    except tc.Cancelled:
+                        raise
+                    except tc.QuotaExceeded:
+                        raise
+                    except tc.ChainError as exc:
+                        if fail_fast:
+                            raise
+                        keys = [t["key"] for t, _, _ in todo]
+                        failed_stories = sorted({t["story"] for t, _, _ in todo})
+                        with state_lock:
+                            failures.append({"char_id": char_id, "stories": failed_stories,
+                                             "keys": keys,
+                                             "error": "%s: %s" % (type(exc).__name__, exc)})
+                        log.error("失败 %s/%s（%s）：%s；已记录，继续后续任务。",
+                                  char_id, ",".join(failed_stories), ",".join(keys), exc)
+                        return len(unit)
                     dt = time.monotonic() - t0
                     for (t, json_path, mp3_path), res in zip(todo, results):
                         _save(t, json_path, mp3_path, res, dt if n == 1 else None)
@@ -585,40 +721,59 @@ def main(args, on_progress=None, cancel=None) -> int:
                             futures = [ex.submit(_process_unit, u) for u in units]
                             for fut in as_completed(futures):
                                 bar.update(fut.result())
+                                writer.flush()
                                 _tick()
                     else:
                         for u in units:
                             bar.update(_process_unit(u))
+                            writer.flush()
                             _tick()
                 finally:
                     bar.close()
+                writer.flush(force=True)
                 processed += stats["n"]
                 _notify(event="char_done", char_id=char_id, char_index=char_index,
                         chars=len(char_ids), tasks=len(tasks), done=int(bar.n))
 
                 for story in done_stories:
                     write_summary(char_id, story, provider_label, mode_label)
+
+                if failures and len(failures) >= max_failures:
+                    log.error("失败任务达到上限 %d（--max-failures），提前结束；"
+                              "已完成进度已保存。", max_failures)
+                    break
     except tc.Cancelled:
-        save_state(state)
+        writer.flush(force=True)
         log.warning("已取消；进度已保存（.translate_stories_state.json），重跑可续跑。")
-        return 6
+        return ExitCode.CANCELLED
     except tc.Paused as exc:
-        save_state(state)
+        writer.flush(force=True)
         log.error("已暂停：%s", exc)
         log.error("进度已保存（.translate_stories_state.json），修复后重跑即可续跑。")
-        return 4
+        return ExitCode.PAUSED
     except tc.ConnectionIssue as exc:
-        save_state(state)
+        writer.flush(force=True)
         log.error("后端连接失败：\n%s", exc)
         log.error("检查网络/代理后重跑即可续跑。")
-        return 5
+        return ExitCode.CONNECTION
+    except tc.QuotaExceeded as exc:
+        writer.flush(force=True)
+        log.error("今日配额已耗尽：%s", exc)
+        log.error("进度已保存（.translate_stories_state.json），次日重跑即可续跑。")
+        return ExitCode.QUOTA
     except tc.UnsupportedLanguage as exc:
-        save_state(state)
+        writer.flush(force=True)
         log.error("语言不受支持：%s", exc)
-        return 2
+        return ExitCode.UNSUPPORTED_LANGUAGE
 
-    if os.path.exists(STATE_PATH):
-        os.remove(STATE_PATH)
+    writer.flush(force=True)
+    if failures:
+        path = write_failures(failures)
+        print("完成 %d 份结果，失败 %d 项（已记录，继续后续任务）。" % (processed, len(failures)))
+        print("失败清单：%s" % rel(path))
+        print("修复后重跑即可续跑（已完成项会跳过）；如希望失败即停用 --fail-fast。")
+        return ExitCode.PARTIAL
+    clear_state()
     # 收尾摘要用 print：不受 -q 的日志级别过滤（`-q` = 只显示错误与最终摘要）
     if len(char_ids) == 1:
         print("完成。结果目录：%s" % rel(os.path.join(story_dir(char_ids[0]), "")))
@@ -627,4 +782,4 @@ def main(args, on_progress=None, cancel=None) -> int:
               % (len(char_ids), processed))
     if logfile:
         print("日志：%s" % rel(logfile))
-    return 0
+    return ExitCode.OK

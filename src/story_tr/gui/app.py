@@ -49,19 +49,11 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__, clean, paths, stories, sync
+from ..exitcodes import LABELS as EXIT_LABELS
 from ..mcp import tools as mtools
 from . import argv as gargv
 from .runner import StreamRelay, TaskRunner, capture_streams
 
-EXIT_LABELS = {
-    -1: "异常（见日志）",
-    0: "完成",
-    2: "语言不受支持",
-    3: "批量状态与上次不一致",
-    4: "已暂停（限流或业务错误）",
-    5: "后端连接失败",
-    6: "已取消（进度已保存）",
-}
 PROVIDERS = ["（自动 google→bing→baidu）", "google", "bing", "baidu"]
 MODES = ["fixed", "random", "custom"]
 PART_LABELS = [("both", "两者都要（默认）"),

@@ -2,9 +2,9 @@
 """把翻译结果渲染成「谷歌翻译 N 次」风格的视频（B 站 1080P 规格）。
 
 版式（1920×1080）：
-- 背景：`profile/story/<story>/<story>.png`，整体压暗 25%
+- 背景：`profile/story/<story>/<story>.png`，等比 cover 裁切（**不压暗、不加底板**）
 - 左下：`assets/translate-logo.webp`（120×120）
-- 右下：两个文本块（上＝原文，下＝译文），自动换行 + 自动缩放
+- 右侧：两个文本块（上＝原文，下＝译文），自动换行 + 自动缩放
 
 输出（每段一屏，段间硬切）：
 - `result/video/<story>.mp4` —— 每个故事一条
@@ -28,6 +28,7 @@ FPS_DEFAULT = 30
 DURATION_DEFAULT = 3.0
 VIDEO_BITRATE = "10M"
 AUDIO_BITRATE = "320k"
+FFMPEG_TIMEOUT = 3600.0  # 单条 ffmpeg 命令最长 1 小时，避免 GUI/CLI 永久卡住
 
 MARGIN = 48
 ICON = 120
@@ -396,10 +397,13 @@ def _ffprobe() -> str:
 
 def probe_duration(path: str) -> float:
     """读取媒体时长（秒）；失败返回 0。"""
-    proc = subprocess.run(
-        [_ffprobe(), "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", path],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        proc = subprocess.run(
+            [_ffprobe(), "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return 0.0
     if proc.returncode != 0:
         return 0.0
     try:
@@ -412,7 +416,15 @@ def _concat_line(path: str) -> str:
     return "file '%s'\n" % path.replace("\\", "/").replace("'", "'\\''")
 
 
-def encode_slideshow(frames, durations, out_path: str, fps: int = FPS_DEFAULT) -> None:
+def _codec_args(crf=None, bitrate: str = VIDEO_BITRATE):
+    """视频质量参数：`--crf` 优先，否则用固定码率（默认 B 站 10M）。"""
+    if crf is not None:
+        return ["-crf", str(int(crf)), "-preset", "medium"]
+    return ["-b:v", str(bitrate), "-maxrate", "12M", "-bufsize", "20M"]
+
+
+def encode_slideshow(frames, durations, out_path: str, fps: int = FPS_DEFAULT,
+                     crf=None, bitrate: str = VIDEO_BITRATE) -> None:
     """把若干张 PNG 按各自时长编码为**无音轨**的 H.264 MP4。"""
     if not frames:
         raise VideoError("没有可编码的帧")
@@ -422,6 +434,7 @@ def encode_slideshow(frames, durations, out_path: str, fps: int = FPS_DEFAULT) -
         raise VideoError("帧数与时长数不一致")
     ffmpeg = _ffmpeg()
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    tmp_out = out_path + ".part.mp4"
     with tempfile.TemporaryDirectory(prefix="story-tr-video-") as td:
         listing = os.path.join(td, "frames.txt")
         with open(listing, "w", encoding="utf-8") as f:
@@ -430,14 +443,23 @@ def encode_slideshow(frames, durations, out_path: str, fps: int = FPS_DEFAULT) -
                 f.write("duration %.3f\n" % dur)
             f.write(_concat_line(frames[-1]))  # 末尾再列一次，保证最后一屏时长生效
 
-        _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-              "-f", "concat", "-safe", "0", "-i", listing,
-              "-vf", "fps=%d,format=yuv420p" % fps,
-              "-c:v", "libx264", "-profile:v", "high",
-              "-b:v", VIDEO_BITRATE, "-maxrate", "12M", "-bufsize", "20M",
-              "-g", str(fps * 2), "-keyint_min", str(fps * 2), "-sc_threshold", "0",
-              "-t", "%.3f" % sum(durations),
-              "-movflags", "+faststart", out_path])
+        cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+               "-f", "concat", "-safe", "0", "-i", listing,
+               "-vf", "fps=%d,format=yuv420p" % fps,
+               "-c:v", "libx264", "-profile:v", "high"]
+        cmd += _codec_args(crf, bitrate)
+        cmd += ["-g", str(fps * 2), "-keyint_min", str(fps * 2), "-sc_threshold", "0",
+                "-t", "%.3f" % sum(durations),
+                "-movflags", "+faststart", tmp_out]
+        try:
+            _run(cmd)
+            os.replace(tmp_out, out_path)
+        finally:
+            if os.path.exists(tmp_out):
+                try:
+                    os.remove(tmp_out)
+                except OSError:
+                    pass
 
 
 def build_audio_track(audio_paths, durations, out_path: str) -> None:
@@ -473,31 +495,53 @@ def build_audio_track(audio_paths, durations, out_path: str) -> None:
 
 
 def mux_audio(video_path: str, audio_path: str, out_path: str) -> None:
-    """把音轨合入视频（视频流直接 copy）。"""
-    _run([_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
-          "-i", video_path, "-i", audio_path,
-          "-c:v", "copy", "-c:a", "copy", "-shortest",
-          "-movflags", "+faststart", out_path])
+    """把音轨合入视频（视频流直接 copy）；先写临时文件再替换。"""
+    tmp = out_path + ".part.mp4"
+    try:
+        _run([_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
+              "-i", video_path, "-i", audio_path,
+              "-c:v", "copy", "-c:a", "copy", "-shortest",
+              "-movflags", "+faststart", tmp])
+        os.replace(tmp, out_path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 def concat_videos(inputs, out_path: str) -> None:
-    """按顺序无损拼接（编码参数一致，`-c copy`）。"""
+    """按顺序无损拼接（编码参数一致，`-c copy`）；先写临时文件再替换。"""
     if not inputs:
         raise VideoError("没有可拼接的视频")
     ffmpeg = _ffmpeg()
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    tmp = out_path + ".part.mp4"
     with tempfile.TemporaryDirectory(prefix="story-tr-concat-") as td:
         listing = os.path.join(td, "videos.txt")
         with open(listing, "w", encoding="utf-8") as f:
             for p in inputs:
                 f.write(_concat_line(p))
-        _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-              "-f", "concat", "-safe", "0", "-i", listing,
-              "-c", "copy", "-movflags", "+faststart", out_path])
+        try:
+            _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                  "-f", "concat", "-safe", "0", "-i", listing,
+                  "-c", "copy", "-movflags", "+faststart", tmp])
+            os.replace(tmp, out_path)
+        finally:
+            if os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
 
 
-def _run(cmd) -> None:
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+def _run(cmd, timeout: float = FFMPEG_TIMEOUT) -> None:
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise VideoError("ffmpeg 超时（超过 %.0f 秒）：%s" % (timeout, cmd[0]))
     if proc.returncode != 0:
         detail = proc.stderr.decode("utf-8", "replace").strip()
         raise VideoError("ffmpeg 失败（退出码 %d）：%s" % (proc.returncode, detail[-1200:]))
@@ -566,7 +610,8 @@ def prepare_audio(char_id: str, story: str, items, base_duration: float = DURATI
 
 def render_story(char_id: str, story: str, items, image: str, out_path: str,
                  duration: float, fps: int, logo: str, audio: bool = True,
-                 audio_paths=None, durations=None) -> float:
+                 audio_paths=None, durations=None, crf=None,
+                 bitrate: str = VIDEO_BITRATE) -> float:
     """一个故事 = 每段一帧；返回总时长（秒）。
 
     `audio=True` 时先编码无音轨视频，再合入音轨（`audio_paths[i]` 为空则该段静音）。
@@ -584,10 +629,10 @@ def render_story(char_id: str, story: str, items, image: str, out_path: str,
             track = os.path.join(td, "audio.m4a")
             build_audio_track(audio_paths or [None] * len(items), durations, track)
             silent = os.path.join(td, "video.mp4")
-            encode_slideshow(frames, durations, silent, fps=fps)
+            encode_slideshow(frames, durations, silent, fps=fps, crf=crf, bitrate=bitrate)
             mux_audio(silent, track, out_path)
         else:
-            encode_slideshow(frames, durations, out_path, fps=fps)
+            encode_slideshow(frames, durations, out_path, fps=fps, crf=crf, bitrate=bitrate)
     return sum(durations)
 
 
@@ -631,6 +676,10 @@ def add_parser(sub):
     g.add_argument("--duration", type=float, default=DURATION_DEFAULT,
                    help="每段停留秒数（默认 %.1f）" % DURATION_DEFAULT)
     g.add_argument("--fps", type=int, default=FPS_DEFAULT, help="帧率（默认 30）")
+    g.add_argument("--crf", type=int, default=None,
+                   help="CRF 质量（0-51，越小越清晰；指定后忽略 --bitrate，常见 20-23）")
+    g.add_argument("--bitrate", default=VIDEO_BITRATE,
+                   help="固定码率（默认 %s，B 站 1080P 规格）" % VIDEO_BITRATE)
     g.add_argument("--logo", default="",
                    help="logo 路径（默认 assets/translate-logo.webp）")
     g.add_argument("--overwrite", action="store_true", help="已有 mp4 也重新生成")
@@ -656,6 +705,15 @@ def add_parser(sub):
 
 
 def main(args) -> int:
+    """CLI 入口：把 `VideoError` 收敛为中文提示 + 退出码 1。"""
+    try:
+        return _main(args)
+    except VideoError as exc:
+        print("视频生成失败：%s" % exc)
+        return 1
+
+
+def _main(args) -> int:
     if args.char_ids and args.all_characters:
         print("不能同时指定角色 id 与 --all-characters，请二选一。")
         return 1
@@ -665,6 +723,9 @@ def main(args) -> int:
         return 1
     if args.duration <= 0:
         print("--duration 必须大于 0。")
+        return 1
+    if args.crf is not None and not 0 <= args.crf <= 51:
+        print("--crf 必须在 0-51 之间。")
         return 1
 
     all_ids = stories.load_char_ids()
@@ -728,7 +789,7 @@ def main(args) -> int:
         render_story(cid, story, chk["items"], chk["image"], out,
                      duration=args.duration, fps=args.fps, logo=logo,
                      audio=not args.no_audio, audio_paths=audio_paths,
-                     durations=durations)
+                     durations=durations, crf=args.crf, bitrate=args.bitrate)
         if not args.quiet:
             print("生成 %s  %d 段 / %.1fs / %s"
                   % (stories.rel(out), len(chk["items"]), total_dur,

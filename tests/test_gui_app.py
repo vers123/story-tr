@@ -216,17 +216,19 @@ def test_log_panel_toggle_and_search(qapp):
         win.close()
 
 
-def test_settings_roundtrip(qapp):
+def test_settings_roundtrip(qapp, tmp_path):
     """表单配置（不含本次目标 id）经 QSettings 存/取一致。"""
     from PySide6.QtCore import QSettings
 
-    settings = QSettings("story-tr", "story-tr-gui")
+    # 用独立的 ini 文件，避免依赖注册表（不同环境可能不可写/有残留值）
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     settings.clear()
     tab = gapp.TranslateTab()
     tab.mode_btns["random"].setChecked(True)
     tab.workers.setValue(4)
     tab.no_tts.setChecked(True)
     tab.save_settings(settings)
+    settings.sync()
 
     restored = gapp.TranslateTab()
     restored.load_settings(settings)

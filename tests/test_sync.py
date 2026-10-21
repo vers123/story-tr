@@ -85,3 +85,56 @@ def test_build_only_keeps_index_for_skipped_character(tmp_path, monkeypatch):
     data = json.loads((tmp_path / "character.json").read_text(encoding="utf-8"))
     assert len(data) == 1
     assert not (tmp_path / "story").exists()
+
+
+# --------------------------------------------------------------------------- #
+# fetch_all：增量 / 更新发现新角色
+# --------------------------------------------------------------------------- #
+def _avatar(name):
+    return {"name": name,
+            "fetter": {"title": "T", "detail": "D", "constellation": "C",
+                       "native": "N", "cv": {"EN": "x"}},
+            "other": {"costume": [], "nameCard": None, "specialFood": None}}
+
+
+def _fetter(text="a\\nb"):
+    return {"story": {"0": {"title": "Details", "title2": None,
+                            "text": text, "text2": ""}}}
+
+
+def test_fetch_all_incremental_fills_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(sync, "CACHE", str(tmp_path / "cache.json"))
+    monkeypatch.setattr(sync, "BASE", str(tmp_path))
+    monkeypatch.setattr(sync.time, "sleep", lambda *_: None)
+
+    calls = []
+
+    def fake_get(loc, kind, cid, tries=4):
+        calls.append((loc, kind, cid))
+        return _avatar("A") if kind == "avatar" else _fetter()
+
+    monkeypatch.setattr(sync, "get", fake_get)
+    recs, info = sync.fetch_all([{"id": "1", "stories": []}], mode="incremental")
+
+    assert recs["1"]["en"]["story"][0]["title"] == "Details"
+    assert recs["1"]["hash"]
+    assert "1" in info["first"]
+    assert len(calls) == 4  # en/chs × avatar/avatarFetter
+    assert (tmp_path / "cache.json").is_file()
+
+
+def test_fetch_all_update_discovers_new_character(tmp_path, monkeypatch):
+    monkeypatch.setattr(sync, "CACHE", str(tmp_path / "cache.json"))
+    monkeypatch.setattr(sync, "BASE", str(tmp_path))
+    monkeypatch.setattr(sync.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(sync, "site_ids", lambda loc="en": (["1", "2-anemo"], ["1", "2"]))
+
+    def fake_get(loc, kind, cid, tries=4):
+        return _avatar("A") if kind == "avatar" else _fetter()
+
+    monkeypatch.setattr(sync, "get", fake_get)
+    recs, info = sync.fetch_all([{"id": "1", "stories": []}], mode="update")
+
+    assert info["discovered"] == ["2"]
+    assert "2" in recs
+    assert "1" in info["first"]

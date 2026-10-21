@@ -15,6 +15,9 @@ classifiers = [
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Utilities",
 ]
 dependencies = [
@@ -28,7 +31,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["build", "twine", "ruff", "pytest"]
+dev = ["build", "twine", "ruff", "pytest", "pytest-cov"]
 # MCP Server（只读）；官方 mcp SDK 需要 Python ≥3.10
 mcp = ["mcp>=2.0,<3; python_version >= '3.10'"]
 # PySide6 桌面界面

@@ -11,6 +11,8 @@ dist/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.pip-tmp/
+pytest-of-*/
 
 # 覆盖率
 .coverage

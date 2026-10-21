@@ -4,6 +4,7 @@
 
 - 选择与 `translate` 一致：char_ids（id / 范围 / 逗号）或 --all-characters，`--stories` 可细化
 - 只删 result/ 里的内容，**保留 `{id}/result/` 目录本身**（维持目录结构约定）
+- `result/video/`（视频与 TTS 缓存）**默认保留**；只有显式 `--stories video` 才清理
 - 默认**交互确认**；`--dry-run` 只预览；`-y/--yes` 跳过确认
 - 默认同步移除 `.translate_stories_state.json` 中对应的 `id|story|key` 记录
   （否则重跑 translate 会把这些任务当作「已完成」跳过）；用 `--keep-state` 保留状态
@@ -15,18 +16,26 @@ import shutil
 
 from . import paths, report, stories
 
+# `result/` 下不作为翻译产物清理的目录：视频与 TTS 缓存体积大、重建成本高
+PROTECTED = {"video"}
+
 
 # --------------------------------------------------------------------------- #
 # 目标与统计
 # --------------------------------------------------------------------------- #
 def targets(char_id, names=None):
-    """返回该角色 `result/` 下要清理的路径（names 为空则取全部）。"""
+    """返回该角色 `result/` 下要清理的路径。
+
+    `names` 为空表示「清理全部翻译产物」，此时跳过 `PROTECTED`（`video/`）；
+    显式指定 `--stories video` 时才会清理视频与 TTS 缓存。
+    """
     base = stories.story_dir(char_id)
     if not os.path.isdir(base):
         return []
     if names:
         return [os.path.join(base, n) for n in names if os.path.exists(os.path.join(base, n))]
-    return [os.path.join(base, n) for n in sorted(os.listdir(base))]
+    return [os.path.join(base, n) for n in sorted(os.listdir(base))
+            if n not in PROTECTED]
 
 
 def measure(paths_):
@@ -146,6 +155,10 @@ def main(args) -> int:
     names = [s.strip() for s in args.stories.split(",") if s.strip()] or None
 
     plan, total_n, total_size = [], 0, 0
+    protected_video = []
+    if not names:
+        protected_video = [cid for cid in char_ids
+                           if os.path.isdir(os.path.join(stories.story_dir(cid), "video"))]
     for cid in char_ids:
         ts = targets(cid, names)
         if not ts:
@@ -172,6 +185,9 @@ def main(args) -> int:
         print("状态记录：%s（%d 条）"
               % ("保留（--keep-state）" if args.keep_state else "同步清理并重置批次签名",
                  state_hits))
+        if protected_video:
+            print("已跳过 %d 个角色的 result/video/（视频与 TTS 缓存）；"
+                  "如需清理：--stories video" % len(protected_video))
 
     if args.dry_run:
         print("--dry-run：未做任何删除。")

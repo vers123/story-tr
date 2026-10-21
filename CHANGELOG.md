@@ -2,6 +2,20 @@
 
 版本号遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)；递增规则与「初始开发阶段（`0.y.z`）」说明见 [README · 版本与变更](README.md#版本与变更)。
 
+## 0.16.0（2026-10-21）
+
+- **新增**：`story-tr status [--json] [--deep]` —— 只读报告角色/故事覆盖、结果与语音数量、视频体积、磁盘占用与批量进度
+- **新增**：`story-tr translate --dry-run` 预估结果数与步骤调用量；`random` 模式会提示“关闭批量、调用量约为 fixed+批量 的 20 倍”
+- **新增**：`translate --revalidate`（校验已有结果与当前 `zh.md` 是否一致）、`--fail-fast`、`--max-failures`
+- **新增**：`video --crf` / `--bitrate`；ffmpeg/ffprobe 增加超时，输出先写临时文件再替换
+- **改进**：单任务连接失败不再终止整批 —— 记录失败清单并继续，结束返回退出码 `7`；当日配额耗尽返回 `8`
+- **改进**：`translate` 使用 `zh.md` 的源语言提示（`zh-CN`），含汉字的段落不再逐段 `langdetect`；`detect_language` 增加文字脚本判定（假名/谚文/汉字），修复中文被误判为韩/日
+- **改进**：批量状态文件改为原子写 + `.bak` + 损坏恢复，并按每 50 条/角色边界去抖写入，避免每份结果全量重写
+- **修复**：`clean` 默认保留 `result/video/`（视频与 TTS 缓存），仅显式 `--stories video` 才清理
+- **修复**：`google_tts_bytes` 的代理环境变量改为加锁串行，避免 `--workers>1` 时互相覆盖
+- **修复**：MCP 的 `char_id` / `story` / `lang` 与 `clean --stories` 增加路径校验，拒绝 `..`、分隔符与绝对路径
+- **工程**：CI 增加 Python 3.14、`video` job（ffmpeg + 中文字体）与 `build` job；新增状态/失败隔离/语言判定/清理保护等回归测试
+
 ## 0.15.1（2026-10-18）
 
 - **优化**：视频语音优先复用**翻译阶段已生成**的 `result/<story>/seg_NN.mp3`，其次用 `result/video/audio/` 缓存，都没有才调 gTTS —— 已有语音的角色（全库 4028 个 mp3）可**零请求**出片，也不再重复占空间

@@ -52,7 +52,7 @@ from tenacity import (
 )
 from tqdm import tqdm
 
-from . import paths, report
+from . import paths, report, statefile
 
 ROOT = paths.home()
 STATE_PATH = os.path.join(ROOT, ".translate_state.json")
@@ -68,6 +68,9 @@ GOOGLE_MIN_INTERVAL = 0.3
 RATE_LIMIT_BASE_WAIT = 5.0
 RATE_LIMIT_MAX_WAIT = 120.0
 RATE_LIMIT_MAX_RETRIES = 10
+# 连接类错误（超时/DNS/SSL/拒连）：先短退避重试同一后端，仍失败再切换
+CONNECTION_RETRIES = 3
+CONNECTION_RETRY_BASE = 10.0
 
 # 内置固定语言链（各 20 个中间语言；首 en、末 zh 不计入）
 CHAINS = {
@@ -125,6 +128,10 @@ class RateLimited(ChainError):
     """被限流（429 / TooManyRequests）：退避等待后重试同一后端，不切换。"""
 
 
+class QuotaExceeded(ChainError):
+    """当日配额耗尽：重试无意义，保存进度后由上层以退出码 8 结束。"""
+
+
 class BusinessError(ChainError):
     """业务类错误：重试后仍失败则暂停。"""
 
@@ -155,11 +162,20 @@ _detect_ready = False
 # 「文字」= Unicode 字母（含汉字）。langdetect 的特征只来自字母，
 # 纯标点（如 `……`）/ 纯数字 / 空白的文本没有任何特征可判。
 _LETTER_RE = re.compile(r"[^\W\d_]", re.UNICODE)
+# 文字脚本：来源文本以中文为主，先按脚本判定，避免 langdetect 把短中文误判成韩/日。
+_KANA_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff]")
+_HANGUL_RE = re.compile(r"[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]")
+_HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
 
 def has_features(text: str) -> bool:
     """文本是否含「文字」（字母 / 汉字等）—— langdetect 判语言所需的最小特征。"""
     return bool(_LETTER_RE.search(text or ""))
+
+
+def has_han(text: str) -> bool:
+    """文本是否含汉字（用于 `translate` 的源语言提示）。"""
+    return bool(_HAN_RE.search(text or ""))
 
 
 def detect_language(text: str) -> str:
@@ -170,12 +186,23 @@ def detect_language(text: str) -> str:
 
     无语言特征的文本（纯标点 / 数字 / 空白，如角色故事里的 `……`）直接按 `en` 返回：
     既然无从判定，也就不需要「先译成英文」这一步，更不该让整批任务因此中断。
+
+    先按 Unicode 脚本判定：假名 → 日语、谚文 → 韩语、汉字 → 简体中文；
+    其余（拉丁字母等）再交给 langdetect。这样短中文不会被误判为韩/日。
     """
     global _detect_ready
-    from langdetect import DetectorFactory, LangDetectException, detect
-
+    text = text or ""
     if not has_features(text):
         return "en"
+    if _KANA_RE.search(text):
+        return "ja"
+    if _HANGUL_RE.search(text):
+        return "ko"
+    if _HAN_RE.search(text):
+        return "zh-CN"
+
+    from langdetect import DetectorFactory, LangDetectException, detect
+
     if not _detect_ready:
         with _detect_lock:
             if not _detect_ready:
@@ -249,6 +276,8 @@ MAX_CHARS_PER_REQUEST = 1500
 PROVIDER_MIN_INTERVAL = {"google": 0.0, "bing": 0.0, "baidu": 1.1}
 _last_req_ts = {}
 _throttle_lock = threading.Lock()
+# gTTS 读取进程级代理环境变量；多线程并发时必须串行，避免互相覆盖/恢复错值
+_tts_lock = threading.Lock()
 
 
 def _throttle(provider, cfg):
@@ -462,6 +491,7 @@ def google_tts_bytes(text: str, lang: str, proxies) -> bytes:
 
     - 长文本由 gTTS 自动分词、分请求后拼接，无需自行分段
     - proxies 通过环境变量临时注入（gTTS 不直接接收 proxies）
+    - gTTS 内部读取进程级环境变量，因此这里用锁串行化，避免多线程互相覆盖
     """
     from io import BytesIO
 
@@ -470,20 +500,21 @@ def google_tts_bytes(text: str, lang: str, proxies) -> bytes:
     text = (text or "").strip()
     if not text:
         raise BusinessError("TTS 无有效文本")
-    saved = {k: os.environ.get(k) for k in ("HTTP_PROXY", "HTTPS_PROXY")}
-    try:
-        if proxies:
-            url = proxies.get("https") or proxies.get("http")
-            if url:
-                os.environ["HTTP_PROXY"] = os.environ["HTTPS_PROXY"] = url
-        buf = BytesIO()
-        gTTS(text=text, lang=lang, slow=False).write_to_fp(buf)
-    finally:
-        for k, v in saved.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
+    with _tts_lock:
+        saved = {k: os.environ.get(k) for k in ("HTTP_PROXY", "HTTPS_PROXY")}
+        try:
+            if proxies:
+                url = proxies.get("https") or proxies.get("http")
+                if url:
+                    os.environ["HTTP_PROXY"] = os.environ["HTTPS_PROXY"] = url
+            buf = BytesIO()
+            gTTS(text=text, lang=lang, slow=False).write_to_fp(buf)
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
     data = buf.getvalue()
     if not data:
         raise BusinessError("TTS 返回空音频")
@@ -491,7 +522,7 @@ def google_tts_bytes(text: str, lang: str, proxies) -> bytes:
 
 
 def _classify_and_raise(exc):
-    if isinstance(exc, UnsupportedLanguage):
+    if isinstance(exc, (UnsupportedLanguage, QuotaExceeded)):
         raise exc
     if isinstance(exc, (RateLimited, ConnectionIssue, BusinessError)):
         raise exc
@@ -499,8 +530,12 @@ def _classify_and_raise(exc):
         raise ConnectionIssue("%s: %s" % (type(exc).__name__, exc))
     name = type(exc).__name__
     msg = str(exc)
+    low = msg.lower()
+    # 每日配额耗尽：重试没有意义，交给上层保存进度并以退出码 8 结束
+    if "200k requests per day" in low or "daily limit" in low or "daily quota" in low:
+        raise QuotaExceeded("%s: %s" % (name, msg))
     # 限流 / 拦截（429、Sorry 页、TooManyRequests）→ 退避重试同一后端
-    if name == "TooManyRequests" or "429" in msg or "too many requests" in msg.lower():
+    if name == "TooManyRequests" or "429" in msg or "too many requests" in low:
         raise RateLimited("%s: %s" % (name, msg))
     # 百度：Invalid Access Limit / 54003 = QPS 超限 → 同样按限流退避重试
     if "access limit" in msg.lower() or "54003" in msg:
@@ -670,12 +705,18 @@ def _step_loop(provider, call, cfg, log):
                                            max=RATE_LIMIT_MAX_WAIT),
                           stop_after_attempt(RATE_LIMIT_MAX_RETRIES + 1),
                           RATE_LIMIT_MAX_RETRIES)
+    connection = _retryer("连接错误", ConnectionIssue,
+                          wait_incrementing(start=CONNECTION_RETRY_BASE,
+                                            increment=CONNECTION_RETRY_BASE, max=40),
+                          stop_after_attempt(CONNECTION_RETRIES), CONNECTION_RETRIES - 1)
     try:
         for attempt in rate_limit:
             with attempt:
                 for inner in business:
                     with inner:
-                        return call()
+                        for conn in connection:
+                            with conn:
+                                return call()
     except BusinessError as exc:
         raise Paused("后端 %s 业务错误，重试 %d 次仍失败：%s"
                      % (provider, MAX_ATTEMPTS - 1, exc))
@@ -775,21 +816,16 @@ def signature(args, text, detected, languages, providers):
 # 状态
 # --------------------------------------------------------------------------- #
 def load_state():
-    if not os.path.exists(STATE_PATH):
-        return None
-    with open(STATE_PATH, encoding="utf-8") as f:
-        return json.load(f)
+    return statefile.load_json_with_backup(STATE_PATH)
 
 
 def save_state(state: dict):
     state["updated_at"] = datetime.now().isoformat(timespec="seconds")
-    with open(STATE_PATH, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+    statefile.atomic_write_json(STATE_PATH, state)
 
 
 def clear_state():
-    if os.path.exists(STATE_PATH):
-        os.remove(STATE_PATH)
+    statefile.remove_with_backup(STATE_PATH)
 
 
 # --------------------------------------------------------------------------- #
@@ -942,6 +978,11 @@ def main(args) -> int:
         log.error("语言不受支持：%s", exc)
         log.error("请检查路线语言或 --provider（参数已保留，可修改后重跑）。")
         return 2
+    except QuotaExceeded as exc:
+        save_state(state)
+        log.error("今日配额已耗尽：%s", exc)
+        log.error("进度已保存（.translate_state.json），次日重跑即可续跑。")
+        return 8
     except Paused as exc:
         save_state(state)
         log.error("已暂停：%s", exc)

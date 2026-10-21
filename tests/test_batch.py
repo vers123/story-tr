@@ -2,6 +2,9 @@
 """批量翻译：分块打包、批量/逐条派发、多条同步走链、输出内容开关与签名。"""
 import json
 import logging
+import os
+import threading
+import time
 import types
 
 import pytest
@@ -230,3 +233,140 @@ def test_parts_label():
     assert stories.parts_label(_fake_args()) == "both"
     assert stories.parts_label(_fake_args(full_only=True)) == "full"
     assert stories.parts_label(_fake_args(segments_only=True)) == "segments"
+
+
+# --------------------------------------------------------------------------- #
+# 语言脚本判定与源语言提示
+# --------------------------------------------------------------------------- #
+def test_detect_language_uses_unicode_scripts():
+    assert tc.detect_language("你好，旅行者") == "zh-CN"
+    assert tc.detect_language("こんにちは") == "ja"
+    assert tc.detect_language("안녕하세요") == "ko"
+    assert tc.detect_language("Hello, World") == "en"
+    assert tc.detect_language("……") == "en"
+
+
+def test_run_chain_many_source_hint_skips_detection(monkeypatch):
+    def boom(text):
+        raise AssertionError("有汉字时不应调用 langdetect")
+
+    monkeypatch.setattr(tc, "detect_language", boom)
+
+    def fake_step_many(texts, src, tgt, providers, cfg, log):
+        return "google", ["%s>%s" % (t, tgt) for t in texts]
+
+    monkeypatch.setattr(tc, "translate_step_many", fake_step_many)
+    out = stories.run_chain_many(["你好", "世界"], ["ja"], ["google"], {}, LOG,
+                                 source_lang="zh-CN")
+    assert [r["source_detected_lang"] for r in out] == ["zh-CN", "zh-CN"]
+
+
+def test_run_chain_many_hint_still_detects_english(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tc, "detect_language", lambda t: calls.append(t) or "en")
+
+    def fake_step_many(texts, src, tgt, providers, cfg, log):
+        return "google", list(texts)
+
+    monkeypatch.setattr(tc, "translate_step_many", fake_step_many)
+    out = stories.run_chain_many(["Hello"], ["ja"], ["google"], {}, LOG,
+                                 source_lang="zh-CN")
+    assert calls == ["Hello"]
+    assert out[0]["source_detected_lang"] == "en"
+
+
+# --------------------------------------------------------------------------- #
+# 结果新鲜度 / 配额 / 连接重试
+# --------------------------------------------------------------------------- #
+def test_result_is_stale(tmp_path):
+    path = tmp_path / "seg_01.json"
+    path.write_text(json.dumps({"source": "旧文本"}), encoding="utf-8")
+    assert stories.result_is_stale(str(path), "新文本") is True
+    assert stories.result_is_stale(str(path), "旧文本") is False
+    assert stories.result_is_stale(str(tmp_path / "missing.json"), "任意") is True
+
+
+def test_classify_daily_quota_as_quota_exceeded():
+    with pytest.raises(tc.QuotaExceeded):
+        tc._classify_and_raise(RuntimeError(
+            "TooManyRequests: allowed to make 5 requests per second and up to "
+            "200k requests per day"))
+
+
+def test_classify_rate_limit_and_connection():
+    with pytest.raises(tc.RateLimited):
+        tc._classify_and_raise(RuntimeError("HTTP 429 too many requests"))
+    import requests
+    with pytest.raises(tc.ConnectionIssue):
+        tc._classify_and_raise(requests.exceptions.Timeout("read timed out"))
+
+
+def test_step_loop_retries_connection_then_succeeds(monkeypatch):
+    monkeypatch.setattr(tc, "CONNECTION_RETRY_BASE", 0)
+    calls = {"n": 0}
+
+    def call():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise tc.ConnectionIssue("boom")
+        return "ok"
+
+    assert tc.CONNECTION_RETRIES >= 3
+    assert tc._step_loop("google", call, {}, LOG) == "ok"
+    assert calls["n"] == 3
+
+
+def test_step_loop_does_not_retry_quota():
+    calls = {"n": 0}
+
+    def call():
+        calls["n"] += 1
+        raise tc.QuotaExceeded("daily quota")
+
+    with pytest.raises(tc.QuotaExceeded):
+        tc._step_loop("google", call, {}, LOG)
+    assert calls["n"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# gTTS 代理环境变量串行化
+# --------------------------------------------------------------------------- #
+def test_google_tts_serializes_proxy_env(monkeypatch):
+    import gtts
+
+    class FakeTTS:
+        active = 0
+        max_active = 0
+        seen = []
+        lock = threading.Lock()
+
+        def __init__(self, text, lang, slow=False):
+            self.text = text
+
+        def write_to_fp(self, fp):
+            with FakeTTS.lock:
+                FakeTTS.active += 1
+                FakeTTS.max_active = max(FakeTTS.max_active, FakeTTS.active)
+                FakeTTS.seen.append(os.environ.get("HTTPS_PROXY"))
+            time.sleep(0.02)
+            fp.write(b"mp3")
+            with FakeTTS.lock:
+                FakeTTS.active -= 1
+
+    monkeypatch.setattr(gtts, "gTTS", FakeTTS)
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+
+    def work(url):
+        tc.google_tts_bytes("你好", "zh-CN", {"https": url})
+
+    threads = [threading.Thread(target=work, args=("http://p1",)),
+               threading.Thread(target=work, args=("http://p2",))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert FakeTTS.max_active == 1  # 同一时刻只有一个 TTS 在改环境
+    assert "http://p1" in FakeTTS.seen and "http://p2" in FakeTTS.seen
+    assert "HTTPS_PROXY" not in os.environ and "HTTP_PROXY" not in os.environ

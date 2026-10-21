@@ -81,6 +81,31 @@ def test_read_result_item_missing(ws):
 
 
 # --------------------------------------------------------------------------- #
+# 路径穿越：只允许工作目录内的合法 slug
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("story", ["../secret", "..", "a/b", "a\\b", ""])
+def test_read_result_item_rejects_bad_story(ws, story):
+    with pytest.raises(ValueError):
+        tools.read_result_item("1", story, "title")
+
+
+@pytest.mark.parametrize("char_id", ["../1", "..", "1/2", "1\\2", ""])
+def test_get_result_summary_rejects_bad_char(ws, char_id):
+    with pytest.raises(ValueError):
+        tools.get_result_summary(char_id, "vision")
+
+
+def test_resource_story_markdown_rejects_traversal(ws):
+    with pytest.raises(ValueError):
+        resources.story_markdown("1", "../vision", "zh")
+
+
+def test_clean_rejects_traversal_story(ws):
+    with pytest.raises(ValueError):
+        tools.clean("1", "../vision")
+
+
+# --------------------------------------------------------------------------- #
 # Resources
 # --------------------------------------------------------------------------- #
 def test_resource_characters_index(ws):

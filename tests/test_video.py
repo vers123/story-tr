@@ -285,3 +285,20 @@ def test_render_story_and_total(tmp_path, monkeypatch):
     total = tmp_path / "1.mp4"
     vid.concat_videos([str(out), str(out)], str(total))
     assert total.exists() and total.stat().st_size > 0
+
+
+def test_codec_args_crf_and_bitrate():
+    bitrate = vid._codec_args(None, "8M")
+    assert "-b:v" in bitrate and "8M" in bitrate
+    crf = vid._codec_args(20)
+    assert "-crf" in crf and "20" in crf
+    assert "-b:v" not in crf
+
+
+def test_main_wraps_video_error(capsys, monkeypatch):
+    def boom(args):
+        raise vid.VideoError("缺少 ffmpeg")
+
+    monkeypatch.setattr(vid, "_main", boom)
+    assert vid.main(object()) == 1
+    assert "视频生成失败" in capsys.readouterr().out
