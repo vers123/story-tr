@@ -21,22 +21,26 @@ class FakeResponse:
 
 
 def test_google_dict_single(monkeypatch):
-    monkeypatch.setattr(tc.requests, "get",
+    monkeypatch.setattr(tc, "_google_get",
                         lambda *a, **k: FakeResponse([["你好"]]))
     assert tc._google_dict_translate("hello", "en", "zh-CN", None) == "你好"
 
 
 def test_google_dict_batch_shape(monkeypatch):
-    monkeypatch.setattr(tc.requests, "get",
+    monkeypatch.setattr(tc, "_google_get",
                         lambda *a, **k: FakeResponse(["A", "B"]))
     assert tc._google_dict_translate_batch(["a", "b"], "en", "zh-CN", None) == ["A", "B"]
 
 
 def test_google_dict_batch_bad_shape(monkeypatch):
-    monkeypatch.setattr(tc.requests, "get",
+    monkeypatch.setattr(tc, "_google_get",
                         lambda *a, **k: FakeResponse([["A"]]))
     with pytest.raises(tc.BusinessError):
         tc._google_dict_translate_batch(["a", "b"], "en", "zh-CN", None)
+
+
+def test_google_session_reused_per_thread():
+    assert tc._google_session() is tc._google_session()
 
 
 def test_google_api_translate(monkeypatch):

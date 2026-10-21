@@ -2,6 +2,11 @@
 
 版本号遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)；递增规则与「初始开发阶段（`0.y.z`）」说明见 [README · 版本与变更](README.md#版本与变更)。
 
+## 0.18.2（2026-10-21）
+
+- **性能**：Google 免 key 端点改用线程内复用的 `requests.Session`，经代理时单请求从约 2.3s 降到约 0.44s（5 倍），显著加快批量补全
+- **工程**：`.translate_*_state.json*` 统一忽略 `.bak` / `.corrupt-*` 备份文件
+
 ## 0.18.1（2026-10-21）
 
 - **修复**：覆盖率检查独立为 `coverage` job —— 原 `test` job 只装 `[dev,mcp]`，GUI/video 测试被跳过，覆盖率只有 52%，触发 `fail_under=70` 失败；新 job 安装全部 extras 与 Qt/ffmpeg/字体依赖

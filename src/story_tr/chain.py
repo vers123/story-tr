@@ -269,6 +269,25 @@ GOOGLE_API_URL = "https://translation.googleapis.com/language/translate/v2"
 GOOGLE_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
              "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
+# 免 key 端点每次新建 TLS 连接，经代理时握手成本很高；线程内复用 Session
+_google_local = threading.local()
+
+
+def _google_session():
+    """每个线程复用一个 requests.Session（复用连接 / TLS 会话）。"""
+    session = getattr(_google_local, "session", None)
+    if session is None:
+        session = requests.Session()
+        session.headers.update({"User-Agent": GOOGLE_UA})
+        _google_local.session = session
+    return session
+
+
+def _google_get(params, timeout, proxies):
+    """Google 免 key 端点的 GET（线程内连接复用，便于测试替换）。"""
+    return _google_session().get(GOOGLE_DICT_URL, params=params, timeout=timeout,
+                                 proxies=proxies or None)
+
 # 单次请求的文本上限：Google 免费 GET 端点约 1800 字（中文 URL 编码后约 9 字节/字）即 400，故留余量
 MAX_CHARS_PER_REQUEST = 1500
 
@@ -317,9 +336,7 @@ def _bing_web_bases():
 def _google_dict_translate(text: str, src: str, tgt: str, proxies) -> str:
     """走 clients5.google.com 的 dict-chrome-ex 端点（免 key，实测比 gtx 端点更少被 429 拦截）。"""
     params = {"client": "dict-chrome-ex", "sl": src, "tl": tgt, "q": text}
-    resp = requests.get(GOOGLE_DICT_URL, params=params,
-                        headers={"User-Agent": GOOGLE_UA}, timeout=20,
-                        proxies=proxies or None)
+    resp = _google_get(params, timeout=20, proxies=proxies)
     if resp.status_code == 429:
         raise RateLimited("google(dict) HTTP 429 被限流")
     resp.raise_for_status()
@@ -347,9 +364,7 @@ def _google_dict_translate_batch(texts, src: str, tgt: str, proxies):
     形状不符时抛 BusinessError，由调用方退化为逐条。
     """
     qs = [("client", "dict-chrome-ex"), ("sl", src), ("tl", tgt)] + [("q", t) for t in texts]
-    resp = requests.get(GOOGLE_DICT_URL, params=qs,
-                        headers={"User-Agent": GOOGLE_UA}, timeout=30,
-                        proxies=proxies or None)
+    resp = _google_get(qs, timeout=30, proxies=proxies)
     if resp.status_code == 429:
         raise RateLimited("google(dict) HTTP 429 被限流")
     resp.raise_for_status()
