@@ -43,10 +43,6 @@ jobs:
       - name: pytest
         run: pytest -q
 
-      - name: coverage（3.13）
-        if: matrix.python-version == '3.13'
-        run: pytest -q --cov=story_tr --cov-report=term-missing
-
   gui:
     # 只在最新的 Python 上跑 GUI：PySide6 体积大（约 200MB），无需铺满矩阵
     runs-on: ubuntu-latest
@@ -75,8 +71,36 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: pytest -q
 
+  coverage:
+    # 覆盖率需要 GUI + video 依赖都装上，否则 app.py / runner.py / video.py 会被算成 0%
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: 安装（全部 extras）
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,mcp,gui,video]"
+
+      - name: 系统依赖（Qt + ffmpeg + 中文字体）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libxkbcommon0 libdbus-1-3 libfontconfig1 \
+            ffmpeg fonts-noto-cjk
+
+      - name: pytest --cov
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest -q --cov=story_tr --cov-report=term-missing
+
   video:
-    # 视频合成依赖 Pillow + 系统 ffmpeg + 中文字体；单独 job，避免给全矩阵装这些
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
