@@ -183,6 +183,14 @@ def test_video_argv_and_status(ws):
     assert status["characters"] == 1
 
 
+def test_make_video_progress(ws):
+    vdir = ws / "data" / "story" / "character" / "1" / "result" / "video"
+    vdir.mkdir(parents=True)
+    (vdir / "vision.mp4").write_bytes(b"x")
+    read = tools.make_video_progress(["1"], 2)
+    assert read() == {"done": 1, "total": 2}
+
+
 def test_count_translate_tasks(ws):
     # 1 篇故事（标题始终翻译）：both = title+full+2 段
     assert tools.count_translate_tasks(["1"], "", "both") == 4

@@ -8,8 +8,9 @@ from __future__ import annotations
 import glob
 import json
 import os
+from datetime import datetime
 
-from . import paths, stories
+from . import paths, statefile, stories
 
 
 def _dir_size(path: str):
@@ -165,6 +166,32 @@ def render(info: dict) -> str:
     return "\n".join(lines)
 
 
+def write_manifest(info=None) -> str:
+    """把状态与抓取缓存 hash 写入 `data/manifest.json`，返回路径。"""
+    info = info or collect()
+    hashes = {}
+    cache_path = os.path.join(paths.home(), "data", "_fetch_all.json")
+    try:
+        with open(cache_path, encoding="utf-8") as f:
+            for rec in json.load(f):
+                if rec.get("id") and rec.get("hash"):
+                    hashes[rec["id"]] = rec["hash"]
+    except (OSError, ValueError):
+        pass
+    path = os.path.join(paths.home(), "data", "manifest.json")
+    statefile.atomic_write_json(path, {
+        "version": 1,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "characters": info["characters"],
+        "stories": info["stories"],
+        "stories_with_result": info["stories_with_result"],
+        "segments": info["segments"],
+        "segment_mp3": info["segment_mp3"],
+        "hashes": hashes,
+    })
+    return path
+
+
 def add_parser(sub):
     """注册 `story-tr status` 子命令。"""
     p = sub.add_parser("status", help="只读状态报告（角色/故事/结果/磁盘/批量进度）",
@@ -172,6 +199,8 @@ def add_parser(sub):
     p.add_argument("--json", action="store_true", help="输出 JSON（便于脚本处理）")
     p.add_argument("--deep", action="store_true",
                    help="额外扫描段落语言分布（较慢，需读取全部 seg JSON）")
+    p.add_argument("--manifest", action="store_true",
+                   help="把角色/故事/结果统计与抓取 hash 写入 data/manifest.json")
     p.set_defaults(func=main)
     return p
 
@@ -182,8 +211,11 @@ def main(args) -> int:
               % stories.CHAR_FILE)
         return 1
     info = collect(deep=getattr(args, "deep", False))
+    manifest_path = write_manifest(info) if getattr(args, "manifest", False) else None
     if getattr(args, "json", False):
         print(json.dumps(info, ensure_ascii=False, indent=2))
     else:
         print(render(info))
+    if manifest_path:
+        print("清单已写入：%s" % manifest_path)
     return 0

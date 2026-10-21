@@ -72,3 +72,14 @@ def test_main_missing_character_file(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(stories, "CHAR_FILE", str(tmp_path / "nope.json"))
     assert status.main(types.SimpleNamespace(json=False, deep=False)) == 1
     assert "找不到" in capsys.readouterr().out
+
+
+def test_write_manifest(tmp_path, monkeypatch):
+    _workspace(tmp_path, monkeypatch)
+    (tmp_path / "data" / "_fetch_all.json").write_text(
+        json.dumps([{"id": "1", "hash": "abc"}]), encoding="utf-8")
+    path = status.write_manifest()
+    data = json.loads((tmp_path / "data" / "manifest.json").read_text(encoding="utf-8"))
+    assert path.endswith("manifest.json")
+    assert data["characters"] == 1 and data["stories"] == 1
+    assert data["hashes"] == {"1": "abc"}

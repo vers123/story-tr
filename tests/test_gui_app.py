@@ -34,6 +34,7 @@ def test_main_window_has_five_tabs(qapp):
     try:
         titles = [win.tabs.tabText(i) for i in range(win.tabs.count())]
         assert titles == ["翻译", "视频", "抓取", "清理", "结果浏览"]
+        assert win.open_btn.text() == "打开结果目录"
         assert win.windowTitle().startswith("story-tr")
     finally:
         win.close()

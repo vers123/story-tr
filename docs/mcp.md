@@ -111,7 +111,7 @@ pip install --no-index --find-links=bundle "story-tr[mcp]"           # 目标机
 | --- | --- |
 | `translate_start(char_ids, …)` | 启动批量翻译，**立即返回 `job_id`** |
 | `fetch_start(update=true)` | 启动数据抓取（默认 `--update` 增量），返回 `job_id` |
-| `video_start(char_ids, …)` | 启动视频渲染，返回 `job_id`（参数同 `story-tr video` 的安全子集） |
+| `video_start(char_ids, …)` | 启动视频渲染，返回 `job_id`（参数同 `story-tr video` 的安全子集；进度按已生成 mp4 数统计） |
 | `job_status(job_id)` | 查询 `state`（queued/running/succeeded/failed/cancelled）/ `progress`（`done`/`total`）/ `returncode` / 日志尾行 |
 | `job_cancel(job_id)` | 取消（排队中直接取消；运行中**终止子进程**） |
 | `job_list` | 列出全部任务（新 → 旧） |

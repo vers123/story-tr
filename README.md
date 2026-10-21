@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.17.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.18.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -619,6 +619,7 @@ story-tr clean --all-characters --dry-run
 story-tr status            # 人类可读
 story-tr status --json     # 机器可读
 story-tr status --deep     # 额外统计段落源语言分布（需读取全部 seg JSON，较慢）
+story-tr status --manifest # 写入 data/manifest.json（角色/故事/结果 + 抓取 hash）
 ```
 
 输出包括：角色/故事覆盖（有结果 / 无结果）、段落 JSON 与 mp3 数量、视频数量与体积、`data/` 与 `logs/` 占用、`.translate_stories_state.json` 的完成数与签名。`--deep` 可用来检查语言判定质量（例如是否还有中文被误判为韩/日）。
@@ -682,6 +683,7 @@ B 站规格：H.264 High / yuv420p / 30 fps / 10 Mbps / GOP 2s / MP4 `faststart`
 
 行为说明：
 
+- **预检摘要**：渲染前输出可生成故事数、段落数与已有语音段数（缺语音的段落会现场 TTS 或静音）
 - **只读翻译结果**：只读 `result/<story>/seg_*.json`，**不读写** `.translate_stories_state.json`，也不改动任何翻译产物 —— 不会影响仍在进行的翻译进度
 - **完整性校验**：逐段检查 `seg_NN.json` 是否存在、`source` 是否与当前 `zh.md` 一致、`final` 是否为空；不完整的故事**跳过并告警**，总视频只合并已完成的故事
 - **总视频**：直接拼接已生成的单故事 mp4（编码参数一致，`-c copy`，不二次损失）；若某条缺失会先补生成
@@ -715,7 +717,7 @@ story-tr-gui                 # 等价：python -m story_tr.gui
 | **抓取** | 增量 / 更新（`--update`）/ 强制重抓（`--refresh`） |
 | **清理** | 角色与故事范围；**预览**（`--dry-run`）与**执行**（确认对话框 + `--yes`）；`--keep-state` |
 | **结果浏览** | 角色（**带搜索**）→ 故事 → `segments.json`（标题 / 全文 / 各段），只读 |
-| **窗口级工具条** | 「开始 / 停止 / 重置批次并重跑」+ 当前任务状态，**常驻窗口顶部**，切换页签不丢状态 |
+| **窗口级工具条** | 「开始 / 停止 / 重置批次并重跑 / 打开结果目录」+ 当前任务状态，**常驻窗口顶部**，切换页签不丢状态 |
 | **状态栏** | 任务结束后保留最终结果：退出码、含义、用时（如 `退出码 0（完成） · 用时 3m21s`） |
 | **日志面板** | 实时日志（与 CLI 同一套输出）；**可折叠**（默认收起为一行标题）、可**按关键词查找**、按级别**着色**（ERROR / WARN / STEP / DEBUG），可清空 / 保存为文件 |
 

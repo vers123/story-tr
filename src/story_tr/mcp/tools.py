@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import glob
 import json
 import logging
 import os
@@ -229,6 +230,32 @@ def status_summary() -> dict:
     from .. import status as status_mod
 
     return status_mod.collect()
+
+
+def count_video_stories(ids, stories_filter: str = "") -> int:
+    """预算本次 video 会生成多少个故事（可出片的故事数）。"""
+    from .. import video as video_mod
+
+    names = [s.strip() for s in stories_filter.split(",") if s.strip()] or None
+    total = 0
+    for cid in ids:
+        for story in video_mod.select_stories(cid, names):
+            if video_mod.check_story(cid, story, allow_partial=False)["ok"]:
+                total += 1
+    return total
+
+
+def make_video_progress(ids, total: int):
+    """视频任务进度：已生成的 `result/video/*.mp4` 数量。"""
+    scope = set(ids)
+
+    def read() -> dict:
+        done = 0
+        for cid in scope:
+            done += len(glob.glob(os.path.join(stories.story_dir(cid), "video", "*.mp4")))
+        return {"done": min(done, total), "total": total}
+
+    return read
 
 
 def count_translate_tasks(ids, stories_filter: str = "", parts: str = "both") -> int:

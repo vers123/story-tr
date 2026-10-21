@@ -104,6 +104,21 @@ def select_stories(char_id: str, names=None):
     return sorted(found, key=story_sort_key)
 
 
+def preflight_summary(plan) -> dict:
+    """统计待渲染计划：故事数、段落数、已有语音段落数。"""
+    stories = len(plan)
+    segments = 0
+    with_audio = 0
+    for cid, story, chk in plan:
+        for item in chk["items"]:
+            segments += 1
+            translated, cached = audio_sources(cid, story, item["index"])
+            if any(os.path.isfile(p) and os.path.getsize(p) > 0
+                   for p in (translated, cached)):
+                with_audio += 1
+    return {"stories": stories, "segments": segments, "with_audio": with_audio}
+
+
 def check_story(char_id: str, story: str, allow_partial: bool = False) -> dict:
     """检查一个故事的翻译结果是否可用于出片。
 
@@ -769,6 +784,12 @@ def _main(args) -> int:
     if not plan:
         print("没有可生成视频的故事（检查翻译结果是否完整）。")
         return ExitCode.USAGE
+
+    if not args.quiet:
+        summary = preflight_summary(plan)
+        print("视频预检：%d 个故事 / %d 段；已有语音 %d 段；跳过 %d 个故事"
+              % (summary["stories"], summary["segments"], summary["with_audio"],
+                 len(skipped)))
 
     # ---- 分故事 ----
     rendered = {}

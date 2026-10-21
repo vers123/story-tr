@@ -180,14 +180,17 @@ def build_server() -> MCPServer:
         ids = tools.resolve_ids(char_ids)
         if not ids:
             raise ValueError("没有匹配到任何角色 id：%s" % char_ids)
+        total = tools.count_video_stories(ids, stories)
         job = jobs.manager().submit(
             "video",
             tools.video_argv(char_ids, stories, only, duration, fps, crf,
                              no_tts=no_tts, no_audio=no_audio,
                              overwrite=overwrite, allow_partial=allow_partial,
-                             strict=strict))
+                             strict=strict),
+            progress_fn=tools.make_video_progress(ids, total))
         out = job.summary()
         out["characters"] = len(ids)
+        out["total_stories"] = total
         return out
 
     @server.tool(description="查询任务状态：state / progress / returncode / 日志尾行")

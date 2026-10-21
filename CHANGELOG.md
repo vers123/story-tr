@@ -2,6 +2,14 @@
 
 版本号遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)；递增规则与「初始开发阶段（`0.y.z`）」说明见 [README · 版本与变更](README.md#版本与变更)。
 
+## 0.18.0（2026-10-21）
+
+- **新增**：`story-tr status --manifest` —— 把角色/故事/结果统计与 `_fetch_all.json` 的 hash 写入 `data/manifest.json`
+- **新增**：`video` 预检摘要 —— 渲染前输出可生成故事数、段落数与已有语音段数
+- **新增**：MCP `video_start` 增加进度（已生成 mp4 数 / 可生成故事数）
+- **新增**：GUI 工具条「打开结果目录」
+- **工程**：补充 Google 免费/官方端点与 deep-translator 回退的单测；覆盖率 `fail_under = 70`
+
 ## 0.17.0（2026-10-21）
 
 - **新增**：标题译文缓存 `data/_title_cache.json` —— 固定/自定义路线下复用重复标题（806 个标题仅 114 个唯一值）；`--no-cache` 可关闭

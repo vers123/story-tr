@@ -12,12 +12,13 @@
 from __future__ import annotations
 
 import html
+import os
 import sys
 import time
 from datetime import datetime
 
-from PySide6.QtCore import QSettings, Qt, Signal
-from PySide6.QtGui import QTextCursor
+from PySide6.QtCore import QSettings, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -676,6 +677,8 @@ class MainWindow(QMainWindow):
         self.reset_btn = QPushButton("重置批次并重跑")
         self.reset_btn.setVisible(False)
         self.reset_btn.clicked.connect(self._on_reset_rerun)
+        self.open_btn = QPushButton("打开结果目录")
+        self.open_btn.clicked.connect(self._open_results)
         self.task_label = QLabel("就绪")
         self.task_label.setWordWrap(True)
         toolbar = QWidget()
@@ -684,6 +687,7 @@ class MainWindow(QMainWindow):
         th.addWidget(self.run_btn)
         th.addWidget(self.stop_btn)
         th.addWidget(self.reset_btn)
+        th.addWidget(self.open_btn)
         th.addSpacing(8)
         th.addWidget(self.task_label, 1)
         self.statusBar().showMessage("就绪")
@@ -770,6 +774,13 @@ class MainWindow(QMainWindow):
         """退出码 3 的出路：按当前参数加 `--reset` 重新开始。"""
         self.reset_btn.setVisible(False)
         self._start(*self.translate_tab.build_job(reset=True), self.translate_tab)
+
+    def _open_results(self):
+        """在文件管理器中打开结果目录（不存在则打开工作目录）。"""
+        path = os.path.join(paths.home(), "data", "story", "character")
+        if not os.path.isdir(path):
+            path = paths.home()
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _start(self, fn, argv_list, hooks, tab):
         if self.runner is not None and self.runner.isRunning():

@@ -302,3 +302,13 @@ def test_main_wraps_video_error(capsys, monkeypatch):
     monkeypatch.setattr(vid, "_main", boom)
     assert vid.main(object()) == 1
     assert "视频生成失败" in capsys.readouterr().out
+
+
+def test_preflight_summary_counts_audio(tmp_path, monkeypatch):
+    (tmp_path / "1.mp3").write_bytes(b"x")
+    monkeypatch.setattr(vid, "audio_sources",
+                        lambda cid, story, i: (str(tmp_path / ("%d.mp3" % i)),
+                                               str(tmp_path / "cache.mp3")))
+    plan = [("1", "vision", {"items": [{"index": 1}, {"index": 2}]})]
+    summary = vid.preflight_summary(plan)
+    assert summary == {"stories": 1, "segments": 2, "with_audio": 1}
