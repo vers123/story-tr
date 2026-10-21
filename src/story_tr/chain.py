@@ -53,6 +53,7 @@ from tenacity import (
 from tqdm import tqdm
 
 from . import paths, report, statefile
+from .exitcodes import ExitCode
 
 ROOT = paths.home()
 STATE_PATH = os.path.join(ROOT, ".translate_state.json")
@@ -831,6 +832,27 @@ def clear_state():
 # --------------------------------------------------------------------------- #
 # 日志
 # --------------------------------------------------------------------------- #
+def prune_logs(keep=None):
+    """按 `STORY_TR_LOG_KEEP` 保留最近 N 个 `.log`（0/未设置 = 不清理）。"""
+    if keep is None:
+        try:
+            keep = int(os.getenv("STORY_TR_LOG_KEEP", "0") or 0)
+        except ValueError:
+            keep = 0
+    if keep <= 0 or not os.path.isdir(LOG_DIR):
+        return []
+    files = sorted((os.path.join(LOG_DIR, n) for n in os.listdir(LOG_DIR)
+                    if n.endswith(".log") and os.path.isfile(os.path.join(LOG_DIR, n))),
+                   key=os.path.getmtime)
+    removed = files[:-keep] if len(files) > keep else []
+    for path in removed:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    return removed
+
+
 def setup_logging(no_file_log: bool, console_level: int = logging.INFO):
     """控制台 handler 走 `report.TqdmHandler`（日志上滚、进度条固定底部）；文件日志记全量。"""
     log = report.setup_console(console_level)
@@ -843,6 +865,7 @@ def setup_logging(no_file_log: bool, console_level: int = logging.INFO):
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         log.addHandler(fh)
+        prune_logs()
     return log, logfile
 
 
@@ -921,7 +944,7 @@ def main(args) -> int:
 
     if args.dry_run:
         print("--dry-run：仅展示路线，未执行翻译。")
-        return 0
+        return ExitCode.OK
 
     tasks = build_tasks(detected, languages)
     sig = signature(args, text, detected, languages, providers)
@@ -939,7 +962,7 @@ def main(args) -> int:
             log.error("  上次：%s", json.dumps(old.get("signature"), ensure_ascii=False))
             log.error("  本次：%s", json.dumps(sig, ensure_ascii=False))
             log.error("如确认从头开始，请加 --reset。")
-            return 3
+            return ExitCode.SIGNATURE
         steps = old.get("steps", [])
         next_index = old.get("next_index", 0)
         cur_text = old.get("text", text)
@@ -977,22 +1000,22 @@ def main(args) -> int:
     except UnsupportedLanguage as exc:
         log.error("语言不受支持：%s", exc)
         log.error("请检查路线语言或 --provider（参数已保留，可修改后重跑）。")
-        return 2
+        return ExitCode.UNSUPPORTED_LANGUAGE
     except QuotaExceeded as exc:
         save_state(state)
         log.error("今日配额已耗尽：%s", exc)
         log.error("进度已保存（.translate_state.json），次日重跑即可续跑。")
-        return 8
+        return ExitCode.QUOTA
     except Paused as exc:
         save_state(state)
         log.error("已暂停：%s", exc)
         log.error("进度已保存（.translate_state.json）。排查/修复后重跑即可从断点继续。")
-        return 4
+        return ExitCode.PAUSED
     except ConnectionIssue as exc:
         save_state(state)
         log.error("所有后端均连接失败：\n%s", exc)
         log.error("请检查网络/代理（可在 .env 配置 HTTPS_PROXY 或加 --proxy）后重跑。")
-        return 5
+        return ExitCode.CONNECTION
 
     final_text = cur_text
     finished_at = datetime.now().isoformat(timespec="seconds")
@@ -1035,4 +1058,4 @@ def main(args) -> int:
         print("日志文件：%s" % os.path.relpath(logfile, ROOT).replace(os.sep, "/"))
 
     clear_state()
-    return 0
+    return ExitCode.OK

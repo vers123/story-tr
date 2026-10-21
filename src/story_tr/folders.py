@@ -18,6 +18,7 @@ import os
 from tqdm import tqdm
 
 from . import paths, report
+from .exitcodes import ExitCode
 
 ROOT = paths.home()
 CHAR_JSON = os.path.join(ROOT, "data", "character.json")
@@ -85,5 +86,5 @@ def main(args) -> int:
         print("告警 %d 条：" % len(warnings))
         for w in warnings:
             print("  " + w)
-        return 1
-    return 0
+        return ExitCode.USAGE
+    return ExitCode.OK

@@ -22,6 +22,7 @@ import subprocess
 import tempfile
 
 from . import paths, report, stories
+from .exitcodes import ExitCode
 
 OUT_W, OUT_H = 1920, 1080
 FPS_DEFAULT = 30
@@ -710,34 +711,34 @@ def main(args) -> int:
         return _main(args)
     except VideoError as exc:
         print("视频生成失败：%s" % exc)
-        return 1
+        return ExitCode.USAGE
 
 
 def _main(args) -> int:
     if args.char_ids and args.all_characters:
         print("不能同时指定角色 id 与 --all-characters，请二选一。")
-        return 1
+        return ExitCode.USAGE
     if not args.char_ids and not args.all_characters:
         print("请指定角色 id / 范围（如 10000021 或 10000002-10000030），"
               "或用 --all-characters 处理全部角色。")
-        return 1
+        return ExitCode.USAGE
     if args.duration <= 0:
         print("--duration 必须大于 0。")
-        return 1
+        return ExitCode.USAGE
     if args.crf is not None and not 0 <= args.crf <= 51:
         print("--crf 必须在 0-51 之间。")
-        return 1
+        return ExitCode.USAGE
 
     all_ids = stories.load_char_ids()
     char_ids = all_ids if args.all_characters else stories.parse_char_ids(args.char_ids, all_ids)
     if not char_ids:
         print("没有匹配到任何角色 id；请对照 data/character.json 检查。")
-        return 1
+        return ExitCode.USAGE
 
     logo = args.logo or os.path.join(paths.home(), "assets", "translate-logo.webp")
     if not os.path.isfile(logo):
         print("找不到 logo：%s（可用 --logo 指定）" % logo)
-        return 1
+        return ExitCode.USAGE
     _pil()  # 尽早给出依赖错误
     _ffmpeg()
     speech = not args.no_tts and not args.no_audio
@@ -764,10 +765,10 @@ def _main(args) -> int:
             print("跳过 %s/%s：%s" % (cid, story, "；".join(problems)))
         if args.strict:
             print("--strict：存在不完整的故事，未生成任何文件。")
-            return 1
+            return ExitCode.USAGE
     if not plan:
         print("没有可生成视频的故事（检查翻译结果是否完整）。")
-        return 1
+        return ExitCode.USAGE
 
     # ---- 分故事 ----
     rendered = {}
@@ -817,7 +818,7 @@ def _main(args) -> int:
 
     if not args.quiet:
         print("完成。视频目录：%s" % stories.rel(video_dir(char_ids[0])))
-    return 0
+    return ExitCode.OK
 
 
 def report_progress(plan):

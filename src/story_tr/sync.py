@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import time
+from datetime import datetime
 
 import requests
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_incrementing
@@ -22,6 +23,7 @@ from tqdm import tqdm
 
 from . import paths, report
 from .chain import Cancelled
+from .exitcodes import ExitCode
 
 ROOT = paths.home()
 BASE = os.path.join(ROOT, "data")
@@ -363,6 +365,13 @@ def build(chars, recs, only=None, info=None):
                 "specialFood": pair_obj(ce.get("specialFood"), cz.get("specialFood"))})
 
     dump(os.path.join(BASE, "character.json"), new_index)
+    dump(os.path.join(BASE, "manifest.json"), {
+        "version": 1,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "characters": len(new_index),
+        "stories": sum(len(e.get("stories") or []) for e in new_index),
+        "hashes": {cid: rec.get("hash") for cid, rec in recs.items() if rec.get("hash")},
+    })
     print("角色数: %d  写入故事文件: %d  无故事角色: %s" % (len(new_index), written, empty_chars))
     print("问题 %d 条：" % len(problems))
     for p in problems:
@@ -427,7 +436,7 @@ def main(args, on_progress=None, cancel=None) -> int:
         recs, info = fetch_all(chars, mode=mode, on_progress=on_progress, cancel=cancel)
     except Cancelled:
         log.warning("已取消；抓取缓存已按批写入 data/_fetch_all.json，重跑可续抓。")
-        return 6
+        return ExitCode.CANCELLED
 
     known = {c["id"] for c in chars}
     for cid in info["discovered"]:
@@ -442,5 +451,5 @@ def main(args, on_progress=None, cancel=None) -> int:
     if mode == "update":
         print()
         print_report(info)
-    return 0
+    return ExitCode.OK
 

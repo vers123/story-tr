@@ -1,0 +1,112 @@
+# -*- coding: utf-8 -*-
+"""`story-tr doctor`：检查运行环境（数据、可选依赖、ffmpeg、字体、密钥、状态文件）。
+
+只读、不联网；缺可选依赖只给 WARN，数据目录/状态文件不可用才 FAIL。
+"""
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import shutil
+import sys
+
+from . import paths, stories
+
+OK, WARN, FAIL = "OK", "WARN", "FAIL"
+_LABELS = {OK: "[ OK ]", WARN: "[WARN]", FAIL: "[FAIL]"}
+
+
+def _row(status, name, detail=""):
+    return (status, name, detail)
+
+
+def collect() -> list:
+    """返回 `[(status, name, detail), …]`，status ∈ OK/WARN/FAIL。"""
+    rows = []
+    rows.append(_row(OK, "Python", "%s (%s)" % (sys.version.split()[0], sys.platform)))
+
+    home = paths.home()
+    rows.append(_row(OK if os.path.isdir(home) else FAIL, "工作目录", home))
+    rows.append(_row(OK if os.path.exists(stories.CHAR_FILE) else FAIL,
+                     "角色索引", stories.CHAR_FILE))
+    data_dir = os.path.join(home, "data")
+    rows.append(_row(OK if os.path.isdir(data_dir) and os.access(data_dir, os.W_OK) else WARN,
+                     "data/ 可写", data_dir))
+
+    state = stories.STATE_PATH
+    if not os.path.exists(state):
+        rows.append(_row(OK, "批量状态", "无（全部完成或尚未开始）"))
+    else:
+        try:
+            with open(state, encoding="utf-8") as f:
+                data = json.load(f)
+            rows.append(_row(OK, "批量状态", "%d 条完成" % len(data.get("completed") or [])))
+        except (OSError, json.JSONDecodeError) as exc:
+            rows.append(_row(FAIL, "批量状态", "无法读取：%s" % exc))
+
+    for module, label, required in (("PIL", "Pillow（video）", False),
+                                    ("PySide6", "PySide6（gui）", False),
+                                    ("mcp", "mcp（MCP Server）", False)):
+        found = importlib.util.find_spec(module) is not None
+        rows.append(_row(OK if found else WARN, label,
+                         "已安装" if found else "未安装（对应可选功能不可用）"))
+        if required and not found:
+            rows[-1] = (FAIL, label, "未安装")
+
+    for exe in ("ffmpeg", "ffprobe"):
+        path = shutil.which(exe)
+        rows.append(_row(OK if path else WARN, exe, path or "未找到（video 不可用）"))
+
+    try:
+        from .video import find_fonts
+        bold, regular = find_fonts()
+        rows.append(_row(OK, "中文字体", "%s / %s" % (os.path.basename(bold),
+                                                      os.path.basename(regular))))
+    except Exception as exc:  # noqa: BLE001 - 字体探测失败只影响 video
+        rows.append(_row(WARN, "中文字体", str(exc)))
+
+    env_path = os.path.join(home, ".env")
+    if not os.path.exists(env_path):
+        rows.append(_row(WARN, ".env", "不存在；将使用免 key 通道（可复制 .env.example）"))
+    else:
+        try:
+            from dotenv import dotenv_values
+            values = dotenv_values(env_path)
+        except Exception:  # noqa: BLE001
+            values = {}
+        configured = [name for name in ("GOOGLE_API_KEY", "BING_API_KEY",
+                                        "BAIDU_APPID", "BAIDU_APPKEY")
+                      if values.get(name)]
+        rows.append(_row(OK, ".env", "已配置：%s" % (", ".join(configured) or "无（免 key 通道）")))
+
+    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+    rows.append(_row(OK, "代理", proxy or "未设置（可选；也可用 --proxy）"))
+    return rows
+
+
+def render(rows) -> str:
+    width = max(len(name) for _, name, _ in rows) if rows else 0
+    lines = []
+    for status, name, detail in rows:
+        lines.append("%s %s  %s" % (_LABELS.get(status, status), name.ljust(width), detail))
+    return "\n".join(lines)
+
+
+def add_parser(sub):
+    """注册 `story-tr doctor` 子命令。"""
+    p = sub.add_parser("doctor", help="检查运行环境（数据、可选依赖、ffmpeg、字体、密钥）",
+                       parents=[paths.data_dir_parent()])
+    p.set_defaults(func=main)
+    return p
+
+
+def main(args) -> int:
+    rows = collect()
+    print(render(rows))
+    failed = [name for status, name, _ in rows if status == FAIL]
+    if failed:
+        print("\n检查未通过：%s" % "、".join(failed))
+        return 1
+    print("\n检查通过（WARN 项仅表示对应可选功能不可用）。")
+    return 0

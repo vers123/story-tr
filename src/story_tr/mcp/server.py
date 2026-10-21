@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import functools
+import json
 
 from .. import __version__
 from ..chain import ChainError
@@ -92,6 +93,12 @@ def build_server() -> MCPServer:
     def r_result(char_id: str, story: str) -> str:
         return resources.result_summary(char_id, story)
 
+    @server.resource("story://status", mime_type="application/json",
+                     description="全局状态：角色/故事覆盖、结果与语音数量、磁盘、批量进度")
+    @_resource_errors
+    def r_status() -> str:
+        return json.dumps(tools.status_summary(), ensure_ascii=False, indent=2)
+
     # ---- Tools：只读检索 ----
     @server.tool(description="列出全部角色（id / 中英名 / 故事数）")
     @_tool_errors
@@ -112,6 +119,11 @@ def build_server() -> MCPServer:
     @_tool_errors
     def read_result_item(char_id: str, story: str, key: str) -> dict:
         return tools.read_result_item(char_id, story, key)
+
+    @server.tool(description="读取全局状态（角色/故事覆盖、结果/语音数量、磁盘、批量进度）")
+    @_tool_errors
+    def status() -> dict:
+        return tools.status_summary()
 
     # ---- Tools：同步（含联网 / 写盘） ----
     @server.tool(description="单条文本跑「来回翻译 N 次」链路（联网，同步返回逐步与最终译文）")
@@ -157,6 +169,26 @@ def build_server() -> MCPServer:
     @_tool_errors
     def fetch_start(update: bool = True) -> dict:
         return jobs.manager().submit("fetch", tools.fetch_argv(update)).summary()
+
+    @server.tool(description="启动视频渲染任务（异步）；返回 job_id，用 job_status 查进度")
+    @_tool_errors
+    def video_start(char_ids: str, stories: str = "", only: str = "both",
+                    duration: float = 3.0, fps: int = 30, crf=None,
+                    no_tts: bool = False, no_audio: bool = False,
+                    overwrite: bool = False, allow_partial: bool = False,
+                    strict: bool = False) -> dict:
+        ids = tools.resolve_ids(char_ids)
+        if not ids:
+            raise ValueError("没有匹配到任何角色 id：%s" % char_ids)
+        job = jobs.manager().submit(
+            "video",
+            tools.video_argv(char_ids, stories, only, duration, fps, crf,
+                             no_tts=no_tts, no_audio=no_audio,
+                             overwrite=overwrite, allow_partial=allow_partial,
+                             strict=strict))
+        out = job.summary()
+        out["characters"] = len(ids)
+        return out
 
     @server.tool(description="查询任务状态：state / progress / returncode / 日志尾行")
     @_tool_errors

@@ -12,7 +12,7 @@ pytest.importorskip("PySide6")
 # 必须在创建 QApplication 之前设置：无显示器环境也能构造控件
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from story_tr import stories, sync  # noqa: E402
+from story_tr import stories, sync, video  # noqa: E402
 from story_tr.gui import app as gapp  # noqa: E402
 
 
@@ -29,14 +29,25 @@ def qapp(tmp_path_factory):
     yield app
 
 
-def test_main_window_has_four_tabs(qapp):
+def test_main_window_has_five_tabs(qapp):
     win = gapp.MainWindow()
     try:
         titles = [win.tabs.tabText(i) for i in range(win.tabs.count())]
-        assert titles == ["翻译", "抓取", "清理", "结果浏览"]
+        assert titles == ["翻译", "视频", "抓取", "清理", "结果浏览"]
         assert win.windowTitle().startswith("story-tr")
     finally:
         win.close()
+
+
+def test_video_tab_builds_core_job(qapp):
+    tab = gapp.VideoTab()
+    tab.char_ids.setText("10000021")
+    tab.all_chars.setChecked(False)
+    fn, argv_list, hooks = tab.build_job()
+    assert fn is video.main
+    assert argv_list[0] == "video" and "10000021" in argv_list
+    assert "--crf" not in argv_list and "--bitrate" in argv_list
+    assert hooks is False  # video 没有 on_progress / cancel
 
 
 def test_translate_tab_builds_core_job(qapp):
@@ -171,7 +182,7 @@ def test_task_tabs_are_scrollable(qapp):
 
     win = gapp.MainWindow()
     try:
-        for tab in (win.translate_tab, win.fetch_tab, win.clean_tab):
+        for tab in (win.translate_tab, win.video_tab, win.fetch_tab, win.clean_tab):
             assert isinstance(tab, QScrollArea)
             assert tab.widgetResizable() is True
             assert tab.widget() is not None

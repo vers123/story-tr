@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import __version__, clean, paths, stories, sync
+from .. import __version__, clean, paths, stories, sync, video
 from ..exitcodes import LABELS as EXIT_LABELS
 from ..mcp import tools as mtools
 from . import argv as gargv
@@ -465,6 +465,98 @@ class CleanTab(_TaskTab):
         self.verbose.setChecked(_as_bool(settings.value("clean/verbose", False)))
 
 
+class VideoTab(_TaskTab):
+    """视频渲染：角色/故事、停留时长、帧率、质量与音频开关。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.char_ids = QLineEdit()
+        self.char_ids.setPlaceholderText("如 10000021；留空并勾选「全部角色」＝全部")
+        self.all_chars = QCheckBox("全部角色（--all-characters）")
+        self.story_filter = QLineEdit()
+        self.story_filter.setPlaceholderText("留空＝该角色全部故事")
+        self.only = QComboBox()
+        self.only.addItems(["两者（--only both）", "只出分故事（--only story）",
+                            "只出总视频（--only total）"])
+        self.duration = QDoubleSpinBox()
+        self.duration.setRange(0.5, 60.0)
+        self.duration.setSingleStep(0.5)
+        self.duration.setDecimals(1)
+        self.duration.setValue(3.0)
+        self.duration.setSuffix(" 秒")
+        self.fps = QSpinBox()
+        self.fps.setRange(10, 60)
+        self.fps.setValue(30)
+        self.quality = QComboBox()
+        self.quality.addItems(["固定码率 10M（B 站规格）", "CRF 20（体积更小）",
+                               "CRF 23（体积最小）"])
+        self.proxy = QLineEdit()
+        self.proxy.setPlaceholderText("可选，如 http://127.0.0.1:10808")
+        self.overwrite = QCheckBox("已有 mp4 也重新生成（--overwrite）")
+        self.no_tts = QCheckBox("不生成语音（--no-tts）")
+        self.no_audio = QCheckBox("完全不添加音轨（--no-audio）")
+        self.allow_partial = QCheckBox("缺段时用已有段落（--allow-partial）")
+        self.strict = QCheckBox("任一故事不完整就失败（--strict）")
+        self.verbose = QCheckBox("显示明细（--verbose）")
+
+        form = QFormLayout()
+        form.addRow("角色 id / 范围", self.char_ids)
+        form.addRow("", self.all_chars)
+        form.addRow("故事（--stories）", self.story_filter)
+        form.addRow("输出", self.only)
+        form.addRow("每段最短停留", self.duration)
+        form.addRow("帧率", self.fps)
+        form.addRow("质量", self.quality)
+        form.addRow("代理（--proxy）", self.proxy)
+
+        box = QGroupBox("视频参数")
+        b = QVBoxLayout(box)
+        b.addLayout(form)
+        for w in (self.overwrite, self.no_tts, self.no_audio,
+                  self.allow_partial, self.strict, self.verbose):
+            b.addWidget(w)
+        b.addWidget(self.bar)
+        b.addWidget(self.status)
+        lay = self.body_layout
+        lay.addWidget(box)
+        lay.addWidget(QLabel("提示：每篇故事需要 profile/story/<story>/<story>.png 背景图；"
+                             "缺图会跳过该故事。"))
+        lay.addStretch(1)
+
+    def build_job(self):
+        crf = [None, 20, 23][self.quality.currentIndex()]
+        only = ["both", "story", "total"][self.only.currentIndex()]
+        argv_list = gargv.video_argv(
+            char_ids=self.char_ids.text(), stories=self.story_filter.text(),
+            all_characters=self.all_chars.isChecked() and not self.char_ids.text().strip(),
+            only=only, duration=float(self.duration.value()), fps=self.fps.value(),
+            crf=crf, overwrite=self.overwrite.isChecked(),
+            no_tts=self.no_tts.isChecked(), no_audio=self.no_audio.isChecked(),
+            allow_partial=self.allow_partial.isChecked(),
+            strict=self.strict.isChecked(), proxy=self.proxy.text(),
+            verbose=self.verbose.isChecked())
+        return video.main, argv_list, False
+
+    def save_settings(self, settings: QSettings):
+        settings.setValue("video/only", self.only.currentIndex())
+        settings.setValue("video/duration", float(self.duration.value()))
+        settings.setValue("video/fps", self.fps.value())
+        settings.setValue("video/quality", self.quality.currentIndex())
+        settings.setValue("video/proxy", self.proxy.text())
+        for name in ("overwrite", "no_tts", "no_audio", "allow_partial", "strict", "verbose"):
+            settings.setValue("video/" + name, getattr(self, name).isChecked())
+
+    def load_settings(self, settings: QSettings):
+        self.only.setCurrentIndex(int(settings.value("video/only", 0)))
+        self.duration.setValue(float(settings.value("video/duration", 3.0)))
+        self.fps.setValue(int(settings.value("video/fps", 30)))
+        self.quality.setCurrentIndex(int(settings.value("video/quality", 0)))
+        self.proxy.setText(str(settings.value("video/proxy", "")))
+        for name in ("overwrite", "no_tts", "no_audio", "allow_partial", "strict", "verbose"):
+            getattr(self, name).setChecked(
+                _as_bool(settings.value("video/" + name, False)))
+
+
 class BrowseTab(QWidget):
     """只读浏览：角色 → 故事 → 翻译结果（角色列表带搜索）。"""
 
@@ -561,11 +653,13 @@ class MainWindow(QMainWindow):
         self._started_at = None
 
         self.translate_tab = TranslateTab()
+        self.video_tab = VideoTab()
         self.fetch_tab = FetchTab()
         self.clean_tab = CleanTab()
         self.browse_tab = BrowseTab()
         self.tabs = QTabWidget()
         self.tabs.addTab(self.translate_tab, "翻译")
+        self.tabs.addTab(self.video_tab, "视频")
         self.tabs.addTab(self.fetch_tab, "抓取")
         self.tabs.addTab(self.clean_tab, "清理")
         self.tabs.addTab(self.browse_tab, "结果浏览")
@@ -736,7 +830,7 @@ class MainWindow(QMainWindow):
         self.browse_tab.reload()
 
     def _set_busy(self, busy: bool):
-        for tab in (self.translate_tab, self.fetch_tab, self.clean_tab):
+        for tab in (self.translate_tab, self.video_tab, self.fetch_tab, self.clean_tab):
             tab.set_running(busy)
         if busy:
             self.run_btn.setEnabled(False)
@@ -786,13 +880,13 @@ class MainWindow(QMainWindow):
 
     # -------------------------------------------------------------- 持久化
     def _save_settings(self):
-        for tab in (self.translate_tab, self.fetch_tab, self.clean_tab):
+        for tab in (self.translate_tab, self.video_tab, self.fetch_tab, self.clean_tab):
             tab.save_settings(self._settings)
         self._settings.setValue("ui/tab", self.tabs.currentIndex())
         self._settings.setValue("ui/log_visible", self.log_toggle.isChecked())
 
     def _load_settings(self):
-        for tab in (self.translate_tab, self.fetch_tab, self.clean_tab):
+        for tab in (self.translate_tab, self.video_tab, self.fetch_tab, self.clean_tab):
             try:
                 tab.load_settings(self._settings)
             except (TypeError, ValueError):  # 旧版本残留的坏值 → 回退默认

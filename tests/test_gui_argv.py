@@ -83,3 +83,12 @@ def test_parse_uses_real_cli_parser():
 def test_parse_clean_carries_keep_state():
     ns = gargv.parse(gargv.clean_argv(char_ids="1", dry_run=False, keep_state=True))
     assert ns.keep_state is True and ns.yes is True and ns.dry_run is False
+
+
+def test_video_argv_defaults_and_options():
+    default = gargv.video_argv(char_ids="1")
+    assert "--bitrate" in default and "--crf" not in default
+    ns = gargv.parse(gargv.video_argv(char_ids="1", only="story", duration=4.5,
+                                      fps=25, crf=20, no_tts=True))
+    assert ns.only == "story" and ns.duration == 4.5 and ns.crf == 20
+    assert ns.no_tts is True and ns.fps == 25

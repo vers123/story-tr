@@ -36,6 +36,7 @@ def ws(tmp_path, monkeypatch):
     monkeypatch.setattr(stories, "STORY_ROOT", str(tmp_path / "data" / "story" / "character"))
     monkeypatch.setattr(stories, "CHAR_FILE", str(tmp_path / "data" / "character.json"))
     monkeypatch.setattr(stories, "STATE_PATH", str(tmp_path / ".state.json"))
+    monkeypatch.setenv("STORY_TR_HOME", str(tmp_path))
     return tmp_path
 
 
@@ -170,6 +171,16 @@ def test_translate_argv_safe_subset(ws):
 def test_fetch_argv_defaults_to_update(ws):
     assert "--update" in tools.fetch_argv()
     assert "--update" not in tools.fetch_argv(update=False)
+
+
+def test_video_argv_and_status(ws):
+    argv = tools.video_argv("1", only="story", duration=4, fps=25, crf=20, no_tts=True)
+    assert argv[argv.index("video") + 1] == "1"
+    assert argv[argv.index("--only") + 1] == "story"
+    assert argv[argv.index("--crf") + 1] == "20"
+    assert "--no-tts" in argv
+    status = tools.status_summary()
+    assert status["characters"] == 1
 
 
 def test_count_translate_tasks(ws):

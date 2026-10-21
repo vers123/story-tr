@@ -11,7 +11,7 @@ from . import __version__, paths
 
 def build_parser() -> argparse.ArgumentParser:
     """构建完整解析器（调用时各子模块会按已定的工作目录完成导入）。"""
-    from . import chain, clean, folders, status, stories, sync, video
+    from . import chain, clean, doctor, folders, status, stories, sync, video
 
     p = argparse.ArgumentParser(
         prog="story-tr",
@@ -29,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     clean.add_parser(sub)
     video.add_parser(sub)
     status.add_parser(sub)
+    doctor.add_parser(sub)
     return p
 
 

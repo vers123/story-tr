@@ -42,6 +42,10 @@ jobs:
       - name: pytest
         run: pytest -q
 
+      - name: coverage（3.13）
+        if: matrix.python-version == '3.13'
+        run: pytest -q --cov=story_tr --cov-report=term-missing
+
   gui:
     # 只在最新的 Python 上跑 GUI：PySide6 体积大（约 200MB），无需铺满矩阵
     runs-on: ubuntu-latest

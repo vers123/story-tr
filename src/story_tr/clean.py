@@ -15,6 +15,7 @@ import os
 import shutil
 
 from . import paths, report, stories
+from .exitcodes import ExitCode
 
 # `result/` 下不作为翻译产物清理的目录：视频与 TTS 缓存体积大、重建成本高
 PROTECTED = {"video"}
@@ -92,7 +93,7 @@ def clean_state(char_ids, names=None, dry_run=False):
     """
     state = stories.load_state()
     if not state or not state.get("completed"):
-        return 0
+        return ExitCode.OK
     ids, wanted = set(char_ids), set(names or [])
     hits = [k for k in state["completed"] if state_key_match(k, ids, wanted)]
     if hits and not dry_run:
@@ -141,17 +142,17 @@ def add_parser(sub):
 def main(args) -> int:
     if args.char_ids and args.all_characters:
         print("不能同时指定角色 id 与 --all-characters，请二选一。")
-        return 1
+        return ExitCode.USAGE
     if not args.char_ids and not args.all_characters:
         print("请指定角色 id / 范围（如 10000021 或 10000002-10000030），"
               "或用 --all-characters 处理全部角色。")
-        return 1
+        return ExitCode.USAGE
 
     all_ids = stories.load_char_ids()
     char_ids = all_ids if args.all_characters else stories.parse_char_ids(args.char_ids, all_ids)
     if not char_ids:
         print("没有匹配到任何角色 id；请对照 data/character.json 检查。")
-        return 1
+        return ExitCode.USAGE
     names = [s.strip() for s in args.stories.split(",") if s.strip()] or None
 
     plan, total_n, total_size = [], 0, 0
@@ -171,7 +172,7 @@ def main(args) -> int:
 
     if not plan and not state_hits:
         print("没有可清理的翻译结果。")
-        return 0
+        return ExitCode.OK
 
     if not args.quiet:  # -q 只看错误与最终摘要
         print("将清理以下 result/ 内容：")
@@ -191,7 +192,7 @@ def main(args) -> int:
 
     if args.dry_run:
         print("--dry-run：未做任何删除。")
-        return 0
+        return ExitCode.OK
     if not args.yes:
         try:
             ans = input("确认清理？[y/N] ").strip().lower()
@@ -199,7 +200,7 @@ def main(args) -> int:
             ans = ""
         if ans not in ("y", "yes"):
             print("已取消。")
-            return 0
+            return ExitCode.OK
 
     for _, ts, _, _ in plan:
         remove(ts)
@@ -207,4 +208,4 @@ def main(args) -> int:
     if not args.keep_state:
         print("状态记录：移除 %d 条，并重置批次签名（下次 translate 可直接运行）。"
               % clean_state(char_ids, names))
-    return 0
+    return ExitCode.OK

@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -26,8 +27,8 @@ from datetime import datetime
 
 from tqdm import tqdm
 
+from . import __version__, paths, report, statefile
 from . import chain as tc
-from . import paths, report, statefile
 from .exitcodes import ExitCode
 
 log = logging.getLogger("translate_chain")
@@ -36,6 +37,8 @@ ROOT = paths.home()
 STORY_ROOT = os.path.join(ROOT, "data", "story", "character")
 CHAR_FILE = os.path.join(ROOT, "data", "character.json")
 STATE_PATH = os.path.join(ROOT, ".translate_stories_state.json")
+TITLE_CACHE_PATH = os.path.join(ROOT, "data", "_title_cache.json")
+TITLE_CACHE_VERSION = 1
 
 
 def load_char_ids():
@@ -302,6 +305,8 @@ def add_parser(sub):
     g = p.add_argument_group("可靠性")
     g.add_argument("--revalidate", action="store_true",
                    help="跳过已有结果前校验其 source 与当前 zh.md 是否一致（默认只按文件存在跳过）")
+    g.add_argument("--no-cache", action="store_true",
+                   help="不使用标题译文缓存（data/_title_cache.json）")
     g.add_argument("--fail-fast", action="store_true",
                    help="任一任务失败即终止整批（默认记录失败并继续，最后返回退出码 7）")
     g.add_argument("--max-failures", type=int, default=20,
@@ -312,8 +317,12 @@ def add_parser(sub):
     return p
 
 
-def parse_char_ids(tokens, all_ids):
-    """解析 char_ids（含 `起始-结束` 范围）→ 按 character.json 顺序返回其中存在的 id。"""
+def parse_char_ids(tokens, all_ids, warn=True, with_missing=False):
+    """解析 char_ids（含 `起始-结束` 范围）→ 按 character.json 顺序返回其中存在的 id。
+
+    `warn=False` 时不打印提示（MCP stdio 不能污染 stdout）；`with_missing=True`
+    时返回 `(存在的 id 列表, 不存在的 id 列表)`。
+    """
     want = set()
     for tok in tokens:
         for part in tok.replace(" ", "").split(","):
@@ -332,9 +341,10 @@ def parse_char_ids(tokens, all_ids):
                 want.add(part)
     have = set(all_ids)
     missing = sorted(want - have)
-    if missing:
+    if missing and warn:
         print("提示：以下 id 不在 character.json 中，已跳过：%s" % ",".join(missing))
-    return [i for i in all_ids if i in want]
+    found = [i for i in all_ids if i in want]
+    return (found, missing) if with_missing else found
 
 
 def resolve_stories(args, char_id):
@@ -489,6 +499,39 @@ def write_failures(failures) -> str:
     return path
 
 
+def write_run_summary(info: dict) -> str:
+    """把一次运行的统计写入 `logs/run_<时间戳>.json`，返回路径。"""
+    os.makedirs(tc.LOG_DIR, exist_ok=True)
+    path = os.path.join(tc.LOG_DIR,
+                        "run_%s.json" % datetime.now().strftime("%Y%m%d_%H%M%S"))
+    statefile.atomic_write_json(path, info)
+    return path
+
+
+def title_cache_key(text: str, args, providers) -> str:
+    """标题译文缓存键：文本 + 路线 + 后端顺序（random 模式不缓存）。"""
+    payload = [TITLE_CACHE_VERSION, text, getattr(args, "mode", None),
+               getattr(args, "chain", None) if getattr(args, "mode", None) == "fixed" else None,
+               getattr(args, "languages", "") if getattr(args, "mode", None) == "custom" else None,
+               getattr(args, "steps", None) if getattr(args, "mode", None) == "random" else None,
+               list(providers)]
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def load_title_cache() -> dict:
+    try:
+        with open(TITLE_CACHE_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_title_cache(cache: dict) -> None:
+    os.makedirs(os.path.dirname(TITLE_CACHE_PATH), exist_ok=True)
+    statefile.atomic_write_json(TITLE_CACHE_PATH, cache)
+
+
 def _dry_run(args, char_ids) -> int:
     """打印任务数与预计调用量；不翻译、不写文件。"""
     languages, label = tc.resolve_languages(args)
@@ -580,8 +623,44 @@ def main(args, on_progress=None, cancel=None) -> int:
     fail_fast = bool(getattr(args, "fail_fast", False))
     max_failures = max(1, int(getattr(args, "max_failures", 20)))
     revalidate = bool(getattr(args, "revalidate", False))
+    use_cache = not getattr(args, "no_cache", False) and args.mode != "random"
+    title_cache = load_title_cache() if use_cache else {}
+    cache_dirty = {"value": False}
+    cache_lock = threading.Lock()
     state_lock = threading.Lock()
     writer = _StateWriter(state, completed, state_lock)
+    run_started = datetime.now().isoformat(timespec="seconds")
+    planned = 0
+
+    def _save_cache():
+        if not use_cache or not cache_dirty["value"]:
+            return
+        with cache_lock:
+            save_title_cache(title_cache)
+            cache_dirty["value"] = False
+
+    def _finish(code):
+        """写运行摘要（失败不影响退出码）并返回退出码。"""
+        _save_cache()
+        try:
+            path = write_run_summary({
+                "version": __version__,
+                "started_at": run_started,
+                "finished_at": datetime.now().isoformat(timespec="seconds"),
+                "characters": len(char_ids),
+                "tasks": planned,
+                "completed": processed,
+                "failed": len(failures),
+                "mode": args.mode,
+                "chain": args.chain if args.mode == "fixed" else None,
+                "providers": providers,
+                "exit_code": int(code),
+            })
+            print("运行摘要：%s" % rel(path))
+        except OSError as exc:  # 摘要失败不影响主流程
+            log.warning("运行摘要写入失败：%s", exc)
+        return code
+
     outer = tqdm(char_ids, desc="角色", unit="个", position=0,
                  **report.bar_kwargs(len(char_ids) <= 1))
     try:
@@ -595,6 +674,7 @@ def main(args, on_progress=None, cancel=None) -> int:
                 if not tasks:
                     log.warning("跳过 %s：没有可处理的故事", char_id)
                     continue
+                planned += len(tasks)
 
                 log.info("角色 %s，故事 %s，共 %d 份结果（%s）",
                          char_id, ",".join(stories), len(tasks), mode_label)
@@ -656,19 +736,34 @@ def main(args, on_progress=None, cancel=None) -> int:
                     """处理一组任务（可被多线程并发调用；共享状态加锁），返回该组任务数。"""
                     if cancel is not None and cancel.is_set():
                         raise tc.Cancelled()
-                    todo = []
+                    languages, chain_label = tc.resolve_languages(args)
+
+                    def _extras(t):
+                        return {"story": t["story"], "segment_index": t["index"],
+                                "source_file": rel(os.path.join(base, t["story"], "zh.md")),
+                                "mode": args.mode, "chain": chain_label}
+
+                    todo, cached = [], []
                     for t in unit:
                         d, json_path, mp3_path = result_paths(char_id, t["story"], t["key"])
                         os.makedirs(d, exist_ok=True)
-                        if not _skip_it(t, json_path):
-                            todo.append((t, json_path, mp3_path))
+                        if _skip_it(t, json_path):
+                            continue
+                        if use_cache and t["key"] == "title":
+                            key = title_cache_key(t["text"], args, providers)
+                            with cache_lock:
+                                hit = title_cache.get(key)
+                            if hit:
+                                cached.append((t, json_path, mp3_path, hit))
+                                continue
+                        todo.append((t, json_path, mp3_path))
+                    for t, json_path, mp3_path, hit in cached:
+                        res = dict(hit)
+                        res.update(_extras(t))
+                        _save(t, json_path, mp3_path, res)
                     if not todo:
                         return len(unit)
-                    languages, chain_label = tc.resolve_languages(args)
-                    extras = [{"story": t["story"], "segment_index": t["index"],
-                               "source_file": rel(os.path.join(base, t["story"], "zh.md")),
-                               "mode": args.mode, "chain": chain_label}
-                              for t, _, _ in todo]
+                    extras = [_extras(t) for t, _, _ in todo]
                     n = len(todo)
                     if n > 1:  # 批量组：开始/结束各一行，耗时记在组上
                         log.info(">>> %s：%d 条（%s）：%s", char_id, n,
@@ -703,6 +798,14 @@ def main(args, on_progress=None, cancel=None) -> int:
                     dt = time.monotonic() - t0
                     for (t, json_path, mp3_path), res in zip(todo, results):
                         _save(t, json_path, mp3_path, res, dt if n == 1 else None)
+                        if use_cache and t["key"] == "title":
+                            key = title_cache_key(t["text"], args, providers)
+                            value = {k: v for k, v in res.items()
+                                     if k not in ("story", "segment_index",
+                                                  "source_file", "mode", "chain")}
+                            with cache_lock:
+                                title_cache[key] = value
+                                cache_dirty["value"] = True
                     if n > 1:
                         log.info("<<< %s：%d 条完成，%.1fs", char_id, n, dt)
                     return len(unit)
@@ -737,6 +840,7 @@ def main(args, on_progress=None, cancel=None) -> int:
 
                 for story in done_stories:
                     write_summary(char_id, story, provider_label, mode_label)
+                _save_cache()
 
                 if failures and len(failures) >= max_failures:
                     log.error("失败任务达到上限 %d（--max-failures），提前结束；"
@@ -745,26 +849,26 @@ def main(args, on_progress=None, cancel=None) -> int:
     except tc.Cancelled:
         writer.flush(force=True)
         log.warning("已取消；进度已保存（.translate_stories_state.json），重跑可续跑。")
-        return ExitCode.CANCELLED
+        return _finish(ExitCode.CANCELLED)
     except tc.Paused as exc:
         writer.flush(force=True)
         log.error("已暂停：%s", exc)
         log.error("进度已保存（.translate_stories_state.json），修复后重跑即可续跑。")
-        return ExitCode.PAUSED
+        return _finish(ExitCode.PAUSED)
     except tc.ConnectionIssue as exc:
         writer.flush(force=True)
         log.error("后端连接失败：\n%s", exc)
         log.error("检查网络/代理后重跑即可续跑。")
-        return ExitCode.CONNECTION
+        return _finish(ExitCode.CONNECTION)
     except tc.QuotaExceeded as exc:
         writer.flush(force=True)
         log.error("今日配额已耗尽：%s", exc)
         log.error("进度已保存（.translate_stories_state.json），次日重跑即可续跑。")
-        return ExitCode.QUOTA
+        return _finish(ExitCode.QUOTA)
     except tc.UnsupportedLanguage as exc:
         writer.flush(force=True)
         log.error("语言不受支持：%s", exc)
-        return ExitCode.UNSUPPORTED_LANGUAGE
+        return _finish(ExitCode.UNSUPPORTED_LANGUAGE)
 
     writer.flush(force=True)
     if failures:
@@ -772,7 +876,7 @@ def main(args, on_progress=None, cancel=None) -> int:
         print("完成 %d 份结果，失败 %d 项（已记录，继续后续任务）。" % (processed, len(failures)))
         print("失败清单：%s" % rel(path))
         print("修复后重跑即可续跑（已完成项会跳过）；如希望失败即停用 --fail-fast。")
-        return ExitCode.PARTIAL
+        return _finish(ExitCode.PARTIAL)
     clear_state()
     # 收尾摘要用 print：不受 -q 的日志级别过滤（`-q` = 只显示错误与最终摘要）
     if len(char_ids) == 1:
@@ -782,4 +886,4 @@ def main(args, on_progress=None, cancel=None) -> int:
               % (len(char_ids), processed))
     if logfile:
         print("日志：%s" % rel(logfile))
-    return ExitCode.OK
+    return _finish(ExitCode.OK)

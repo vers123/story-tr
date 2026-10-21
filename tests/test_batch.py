@@ -370,3 +370,15 @@ def test_google_tts_serializes_proxy_env(monkeypatch):
     assert FakeTTS.max_active == 1  # 同一时刻只有一个 TTS 在改环境
     assert "http://p1" in FakeTTS.seen and "http://p2" in FakeTTS.seen
     assert "HTTPS_PROXY" not in os.environ and "HTTP_PROXY" not in os.environ
+
+
+def test_prune_logs_keeps_recent(tmp_path, monkeypatch):
+    monkeypatch.setattr(tc, "LOG_DIR", str(tmp_path))
+    for i in range(4):
+        path = tmp_path / ("%d.log" % i)
+        path.write_text("x", encoding="utf-8")
+        os.utime(path, (1000 + i, 1000 + i))
+
+    removed = tc.prune_logs(keep=2)
+    assert len(removed) == 2
+    assert sorted(p.name for p in tmp_path.glob("*.log")) == ["2.log", "3.log"]

@@ -71,6 +71,9 @@ def test_build_writes_one_index_entry_per_character(tmp_path, monkeypatch):
     data = json.loads((tmp_path / "character.json").read_text(encoding="utf-8"))
     assert len(data) == 1
     assert data[0]["stories"] == ["details"]
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["characters"] == 1
+    assert manifest["stories"] == 1
     md = tmp_path / "story" / "10000021" / "profile" / "story" / "details" / "zh.md"
     assert md.exists()
 

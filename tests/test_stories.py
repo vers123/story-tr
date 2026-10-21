@@ -82,7 +82,7 @@ def _main_args(**kw):
                 provider="google", proxy="", min_interval=0.3, balance=False,
                 no_tts=True, workers=1, no_batch=False, overwrite=False, reset=False,
                 revalidate=False, fail_fast=False, max_failures=20, data_dir="",
-                dry_run=False)
+                dry_run=False, no_cache=False)
     base.update(kw)
     return types.SimpleNamespace(**base)
 
@@ -117,6 +117,40 @@ def test_main_dry_run_prints_plan_without_writing(tmp_path, monkeypatch, capsys)
     assert "结果 8 份" in out  # 每个故事 title + full + 2 段
     assert not (char_dir / "result").exists()
     assert not (tmp_path / "state.json").exists()
+
+
+def test_main_uses_title_cache(tmp_path, monkeypatch):
+    root, char_dir = _make_ws(tmp_path)
+    monkeypatch.setattr(stories, "STORY_ROOT", str(root))
+    monkeypatch.setattr(stories, "CHAR_FILE", str(tmp_path / "data" / "character.json"))
+    monkeypatch.setattr(stories, "STATE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.setattr(stories, "ROOT", str(tmp_path))
+    monkeypatch.setattr(stories, "TITLE_CACHE_PATH", str(tmp_path / "title_cache.json"))
+    monkeypatch.setattr(tc, "LOG_DIR", str(tmp_path / "logs"))
+
+    args = _main_args()
+    key = stories.title_cache_key("标题", args, ["google"])
+    (tmp_path / "title_cache.json").write_text(json.dumps({key: {
+        "source": "标题", "source_detected_lang": "zh-CN", "target_lang": "zh-CN",
+        "provider": "google", "languages": ["ja"], "steps": [], "final": "缓存标题",
+    }}, ensure_ascii=False), encoding="utf-8")
+
+    seen = []
+
+    def fake_chain(texts, languages, providers, cfg, log, extras=None, source_lang=None):
+        seen.extend(texts)
+        return [{"source": t, "source_detected_lang": "zh-CN",
+                 "target_lang": "zh-CN", "provider": "google",
+                 "languages": list(languages), "steps": [], "final": "译" + t}
+                for t in texts]
+
+    monkeypatch.setattr(stories, "run_chain_many", fake_chain)
+    assert stories.main(args) == 0
+    assert "标题" not in seen  # 标题直接命中缓存，不进入翻译链
+    for story in ("vision", "vision2"):
+        out = json.loads((char_dir / "result" / story / "title.json")
+                         .read_text(encoding="utf-8"))
+        assert out["final"] == "缓存标题"
 
 
 def test_main_revalidate_retranslates_stale_result(tmp_path, monkeypatch):
@@ -184,4 +218,6 @@ def test_main_continues_after_unit_failure(tmp_path, monkeypatch):
     assert (char_dir / "result" / "vision" / "seg_01.json").is_file()
     assert not (char_dir / "result" / "vision2" / "seg_01.json").exists()
     assert list((tmp_path / "logs").glob("failures_*.json"))
+    summary = json.loads(next((tmp_path / "logs").glob("run_*.json")).read_text(encoding="utf-8"))
+    assert summary["failed"] == 1 and summary["exit_code"] == 7
     assert (tmp_path / "state.json").is_file()  # 有失败时保留进度

@@ -88,6 +88,40 @@ def clean_argv(char_ids="", stories="", all_characters=False, dry_run=True,
     return _verbosity(argv, verbose, quiet)
 
 
+def video_argv(char_ids="", stories="", all_characters=False, only="both",
+               duration=3.0, fps=30, crf=None, bitrate="10M", overwrite=False,
+               no_tts=False, no_audio=False, allow_partial=False, strict=False,
+               proxy="", verbose=False, quiet=False) -> list:
+    """组装 `story-tr video` 的 argv。"""
+    from .. import video as video_mod
+
+    argv = ["video"]
+    if char_ids.strip():
+        argv.append(char_ids.strip())
+    if all_characters:
+        argv.append("--all-characters")
+    if stories.strip():
+        argv += ["--stories", stories.strip()]
+    argv += ["--only", only, "--duration", str(duration), "--fps", str(fps)]
+    if crf is not None:
+        argv += ["--crf", str(crf)]
+    else:
+        argv += ["--bitrate", bitrate or video_mod.VIDEO_BITRATE]
+    if overwrite:
+        argv.append("--overwrite")
+    if no_tts:
+        argv.append("--no-tts")
+    if no_audio:
+        argv.append("--no-audio")
+    if allow_partial:
+        argv.append("--allow-partial")
+    if strict:
+        argv.append("--strict")
+    if proxy.strip():
+        argv += ["--proxy", proxy.strip()]
+    return _verbosity(argv, verbose, quiet)
+
+
 def parse(argv) -> argparse.Namespace:
     """用真实 CLI 解析器解析 argv，并补上已解析的工作目录（与 `cli.main` 一致）。"""
     ns = cli.build_parser().parse_args(list(argv))

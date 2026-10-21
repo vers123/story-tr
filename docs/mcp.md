@@ -96,6 +96,7 @@ pip install --no-index --find-links=bundle "story-tr[mcp]"           # 目标机
 | `list_stories(char_id)` | 某角色的故事：文件夹名 / 中英标题 / 段落数 |
 | `get_result_summary(char_id, story)` | 翻译结果概要（标题 / 全文 / 各段的源文与最终译文） |
 | `read_result_item(char_id, story, key)` | 单条明细：`key` 取 `full` / `title` / `seg_NN` |
+| `status()` | 全局状态：角色/故事覆盖、结果与语音数量、磁盘、批量进度 |
 
 ## Tools（同步：联网 / 写盘）
 
@@ -110,6 +111,7 @@ pip install --no-index --find-links=bundle "story-tr[mcp]"           # 目标机
 | --- | --- |
 | `translate_start(char_ids, …)` | 启动批量翻译，**立即返回 `job_id`** |
 | `fetch_start(update=true)` | 启动数据抓取（默认 `--update` 增量），返回 `job_id` |
+| `video_start(char_ids, …)` | 启动视频渲染，返回 `job_id`（参数同 `story-tr video` 的安全子集） |
 | `job_status(job_id)` | 查询 `state`（queued/running/succeeded/failed/cancelled）/ `progress`（`done`/`total`）/ `returncode` / 日志尾行 |
 | `job_cancel(job_id)` | 取消（排队中直接取消；运行中**终止子进程**） |
 | `job_list` | 列出全部任务（新 → 旧） |
@@ -122,8 +124,9 @@ pip install --no-index --find-links=bundle "story-tr[mcp]"           # 目标机
 | `story://character/{id}` | 角色 `meta.json` / `text.json` / 故事清单（JSON） |
 | `story://story/{id}/{story}/{lang}` | 故事原文 Markdown（`lang` = `zh` / `en`，含 frontmatter） |
 | `story://result/{id}/{story}` | 翻译结果概要 `segments.json`（JSON） |
+| `story://status` | 全局状态（角色/故事覆盖、结果与语音数量、磁盘、批量进度） |
 
-> **长任务说明**：`translate` / `fetch` 由 MCP 以**子进程**调用既有 CLI（`python -m story_tr …`），
+> **长任务说明**：`translate` / `fetch` / `video` 由 MCP 以**子进程**调用既有 CLI（`python -m story_tr …`），
 > 同一时刻**只跑一个写任务**（串行队列），避免多个任务争用 `.translate_stories_state.json`；
 > 子进程输出写入 `logs/mcp_<job_id>.log`（`logs/` 已忽略）；job 表存在**内存**中，服务重启即丢列表，但底层断点仍在（重跑可续）。
 > `translate` 只暴露安全参数（`char_ids` / `stories` / `mode` / `chain` / `workers` / `provider` / `full_only` / `segments_only` / `languages`），

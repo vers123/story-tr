@@ -2,6 +2,18 @@
 
 版本号遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)；递增规则与「初始开发阶段（`0.y.z`）」说明见 [README · 版本与变更](README.md#版本与变更)。
 
+## 0.17.0（2026-10-21）
+
+- **新增**：标题译文缓存 `data/_title_cache.json` —— 固定/自定义路线下复用重复标题（806 个标题仅 114 个唯一值）；`--no-cache` 可关闭
+- **新增**：`story-tr doctor` —— 检查数据、可选依赖、ffmpeg/ffprobe、中文字体、`.env` 密钥、代理与状态文件
+- **新增**：GUI「视频」页签（角色/故事、`--only`、时长、帧率、质量、音频开关）
+- **新增**：MCP `status` Tool / `story://status` Resource / `video_start` 长任务
+- **新增**：`data/manifest.json`（角色/故事数 + 各角色内容 hash，随 `fetch` 生成）
+- **新增**：`requirements.lock`（本机/CI 验证过的直接依赖版本）
+- **改进**：`translate` 结束写 `logs/run_*.json` 运行摘要；`STORY_TR_LOG_KEEP=N` 可保留最近 N 个日志
+- **改进**：覆盖率配置与 CI 3.13 覆盖率报告；`parse_char_ids` 合并为单一实现；`sync/clean/video/folders/chain` 退出码统一为 `ExitCode`
+- **文档**：README/docs 补充 doctor、标题缓存、日志轮转、GUI 视频页签与 MCP 新能力
+
 ## 0.16.1（2026-10-21）
 
 - **修复**：CI 的 Python 3.9 job 固定到 `ubuntu-22.04` —— `ubuntu-latest` 已升级到 26.04，不再提供 3.9 的预装版本，导致 setup-python 直接失败

@@ -17,12 +17,13 @@ def test_registers_tools():
     names = sorted(t.name for t in asyncio.run(s.list_tools()))
     assert names == ["chain", "clean", "fetch_start", "get_result_summary", "job_cancel",
                      "job_list", "job_status", "list_characters", "list_stories",
-                     "read_result_item", "translate_start"]
+                     "read_result_item", "status", "translate_start", "video_start"]
 
 
 def test_registers_resources_and_templates():
     s = server.build_server()
-    assert sorted(r.uri for r in asyncio.run(s.list_resources())) == ["story://characters"]
+    assert sorted(r.uri for r in asyncio.run(s.list_resources())) == [
+        "story://characters", "story://status"]
     templates = asyncio.run(s.list_resource_templates())
     assert sorted(t.uri_template for t in templates) == [
         "story://character/{char_id}",

@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.16.1`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.17.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -184,6 +184,8 @@ story-tr fetch --refresh
 ├── data/                               # ★ 不入库：由 `story-tr fetch` 生成（见「数据来源」）
 │   ├── character.json                  # 角色索引（id/名称 + path/stories）
 │   ├── _fetch_all.json                 # 原始抓取缓存（断点续抓 + 内容指纹 hash，供 --update 检测变化）
+│   ├── manifest.json                   # 数据清单（角色/故事数 + 各角色内容 hash）
+│   ├── _title_cache.json               # 标题译文缓存（固定/自定义路线复用）
 │   └── story/character/{id}/
 │       ├── profile/
 │       │   ├── meta.json                 # 语言无关属性（rank/element/birthday/…）
@@ -225,7 +227,7 @@ story-tr fetch --refresh
 │       ├── resources.py                # Resource 函数（不依赖 mcp）
 │       └── jobs.py                     # 长任务：串行队列 / 进度 / 取消（不依赖 mcp）
 │   └── gui/                            # story-tr-gui（PySide6 桌面界面；需可选依赖）
-│       ├── app.py                      # 主窗口：窗口级工具条 + 四个页签 + 可折叠日志面板
+│       ├── app.py                      # 主窗口：窗口级工具条 + 五个页签 + 可折叠日志面板
 │       ├── runner.py                   # QThread 执行核心 + 日志转发到界面
 │       └── argv.py                     # 表单 → CLI 参数（不依赖 PySide6）
 ├── assets/                             # 固定素材（translate-logo.webp，随仓库提交）
@@ -245,6 +247,7 @@ story-tr fetch --refresh
 ├── pyproject.toml                      # 打包元数据 + 入口点 + ruff/pytest 配置
 ├── main.py                             # 兼容入口：python main.py <子命令>
 ├── requirements.txt
+├── requirements.lock                   # 本机/CI 验证过的直接依赖版本（复现用）
 ├── LICENSE                             # MIT
 ├── CHANGELOG.md                        # 变更记录（各版本历史）
 └── README.md
@@ -340,6 +343,8 @@ title: "角色详细"
 | `-q` / `--quiet` | 只显示错误与最终摘要（进度条仍在） |
 
 - 文件日志（`logs/*.log`）始终记录**全量明细**，不受以上开关影响
+- `translate` 结束会写 `logs/run_*.json`（结果数/失败数/退出码/耗时/参数）与 `logs/failures_*.json`（失败任务清单）
+- 日志轮转（可选）：设置 `STORY_TR_LOG_KEEP=N` 只保留最近 N 个 `.log`（默认 `0` = 不清理）
 - `story-tr chain` 默认就显示每次步骤明细（单条文本看每步才是重点）
 - 非交互终端（重定向 / 管道，例如 MCP 子进程）**自动禁用进度条**并改用普通行输出，避免把 `\r` 控制序列写进日志文件
 
@@ -352,6 +357,7 @@ title: "角色详细"
 | `story-tr clean <id/范围>` | 清理 `{id}/result/` 下的翻译产物（保留 `result/` 目录本身；默认不删 `result/video/`） |
 | `story-tr video <id/范围>` | 把翻译结果渲染成「谷歌翻译 N 次」视频（B 站 1080P） |
 | `story-tr status [--json] [--deep]` | 只读报告角色/故事覆盖、结果与语音数量、磁盘占用、批量进度 |
+| `story-tr doctor` | 检查数据、可选依赖、ffmpeg、字体、密钥与状态文件 |
 
 **退出码**（CLI 与 GUI 共用）：
 
@@ -536,6 +542,11 @@ story-tr translate 10000021 --no-batch
 | `--balance` | 同 `translate_chain.py`（多后端轮转分摊，默认关闭） |
 | `--overwrite` | 已有结果也重跑（默认跳过） |
 | `--reset` | 忽略旧批量状态 |
+| `--revalidate` | 跳过已有结果前校验其 `source` 与当前 `zh.md` 是否一致 |
+| `--no-cache` | 不使用标题译文缓存 `data/_title_cache.json`（random 模式默认不缓存） |
+| `--dry-run` | 只统计结果数与预计步骤调用量，不翻译、不写文件 |
+| `--fail-fast` | 任一任务失败即终止整批（默认记录失败并继续，退出码 7） |
+| `--max-failures` | 失败达到该数量时提前结束（默认 20） |
 | `--no-tts` / `--no-file-log` | 同上 |
 | `-q` / `--verbose` | 控制台详略（见「[控制台输出](#控制台输出)」） |
 
@@ -612,6 +623,16 @@ story-tr status --deep     # 额外统计段落源语言分布（需读取全部
 
 输出包括：角色/故事覆盖（有结果 / 无结果）、段落 JSON 与 mp3 数量、视频数量与体积、`data/` 与 `logs/` 占用、`.translate_stories_state.json` 的完成数与签名。`--deep` 可用来检查语言判定质量（例如是否还有中文被误判为韩/日）。
 
+### `story-tr doctor`
+
+只读检查运行环境，适合首次安装或换机时排查：
+
+```bash
+story-tr doctor
+```
+
+检查项：工作目录与 `data/character.json`、`data/` 可写、批量状态文件、Pillow / PySide6 / mcp、`ffmpeg` / `ffprobe`、中文字体、`.env` 中的后端密钥、代理环境变量。缺可选依赖只给 `WARN`；缺数据或状态文件损坏会 `FAIL` 并返回 1。
+
 ### `story-tr video`
 
 把已有翻译结果渲染成「谷歌翻译 N 次」风格的视频，按 **B 站投稿规格**输出。
@@ -673,7 +694,7 @@ B 站规格：H.264 High / yuv420p / 30 fps / 10 Mbps / GOP 2s / MP4 `faststart`
 
 - 命令：`story-tr-mcp`（等价 `python -m story_tr.mcp`），**stdio** 传输
 - 依赖：可选依赖 `pip install -e ".[mcp]"`（官方 `mcp` SDK，**需 Python ≥3.10**）
-- 能力：**11 个 Tool**（4 只读 + 2 同步 + 5 长任务 job）+ **4 个 Resource**（角色 / 故事原文 / 翻译结果）
+- 能力：**13 个 Tool**（5 只读 + 2 同步 + 6 长任务 job）+ **5 个 Resource**（角色 / 故事原文 / 翻译结果 / 全局状态）
 - 工作目录同 CLI：`$STORY_TR_HOME` → 向上查找 `data/character.json` → 当前目录
 
 **完整说明见 → [docs/mcp.md](docs/mcp.md)**（客户端配置、分发安装、Tool / Resource 清单）
@@ -690,6 +711,7 @@ story-tr-gui                 # 等价：python -m story_tr.gui
 | 页签 | 内容 |
 | --- | --- |
 | **翻译** | 参数按「基本 / 输出内容 / 速率与后端」**三组**排布；角色 id / 范围（或全部）、故事、模式与链、后端、并发、最小间隔；输出内容三选一（都要 / 只出全文 / 只出段落）、重跑 / 不生成语音 / 详细日志 |
+| **视频** | 角色与故事范围、`--only`、停留时长、帧率、质量（10M 固定码率 / CRF 20 / CRF 23）、重跑 / 不生成语音 / 无音轨 / 允许缺段 / 严格模式 |
 | **抓取** | 增量 / 更新（`--update`）/ 强制重抓（`--refresh`） |
 | **清理** | 角色与故事范围；**预览**（`--dry-run`）与**执行**（确认对话框 + `--yes`）；`--keep-state` |
 | **结果浏览** | 角色（**带搜索**）→ 故事 → `segments.json`（标题 / 全文 / 各段），只读 |
@@ -731,7 +753,7 @@ story-tr-gui                 # 等价：python -m story_tr.gui
 
 本项目以 **MIT** 许可发布，见 [LICENSE](LICENSE)（Copyright © 2026 vers123）。
 
-第三方依赖（以 `pyproject.toml` 的 `dependencies` 为准；`requirements.txt` 为便捷镜像）：
+第三方依赖（以 `pyproject.toml` 的 `dependencies` 为准；`requirements.txt` 为便捷镜像，`requirements.lock` 记录验证过的直接依赖版本）：
 
 | 依赖 | 用途 | 许可 |
 | --- | --- | --- |

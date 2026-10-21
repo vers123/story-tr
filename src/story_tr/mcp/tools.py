@@ -138,27 +138,14 @@ def read_result_item(char_id: str, story: str, key: str) -> dict:
 def parse_char_ids(char_ids: str, all_ids=None) -> tuple:
     """解析 `id / 起始-结束 / 逗号组合`，返回 `(存在的 id 列表, 不在列表中的 id)`。
 
-    与 `stories.parse_char_ids` 语义一致，但**不向 stdout 打印**提示。
+    与 `stories.parse_char_ids` 共用实现，但**不向 stdout 打印**提示。
     """
     if all_ids is None:
         all_ids = [c.get("id") for c in load_character_index() if c.get("id")]
-    want = set()
-    for tok in str(char_ids).replace(" ", "").split(","):
-        if not tok:
-            continue
-        if "-" in tok:
-            a, b = tok.split("-", 1)
-            try:
-                start, end = int(a), int(b)
-            except ValueError as exc:
-                raise ValueError("无法解析 id 范围：%s（应形如 10000002-10000030）" % tok) from exc
-            if start > end:
-                start, end = end, start
-            want.update(str(i) for i in range(start, end + 1))
-        else:
-            want.add(tok)
-    have = set(all_ids)
-    return [i for i in all_ids if i in want], sorted(want - have)
+    try:
+        return stories.parse_char_ids([str(char_ids)], all_ids, warn=False, with_missing=True)
+    except SystemExit as exc:  # CLI 用 SystemExit 报错；MCP 统一转 ValueError
+        raise ValueError(str(exc)) from exc
 
 
 def resolve_ids(char_ids: str) -> list:
@@ -206,6 +193,42 @@ def fetch_argv(update: bool = True) -> list:
     if update:
         argv.append("--update")
     return argv
+
+
+def video_argv(char_ids: str, stories_filter: str = "", only: str = "both",
+               duration: float = 3.0, fps: int = 30, crf=None,
+               bitrate: str = "10M", no_tts: bool = False, no_audio: bool = False,
+               overwrite: bool = False, allow_partial: bool = False,
+               strict: bool = False) -> list:
+    """构造 `story-tr video` 的命令行（安全子集）。"""
+    from .. import video as video_mod
+
+    argv = _base_argv() + ["video", char_ids]
+    if stories_filter:
+        argv += ["--stories", stories_filter]
+    argv += ["--only", only, "--duration", str(float(duration)), "--fps", str(int(fps))]
+    if crf is not None:
+        argv += ["--crf", str(int(crf))]
+    else:
+        argv += ["--bitrate", bitrate or video_mod.VIDEO_BITRATE]
+    if no_tts:
+        argv.append("--no-tts")
+    if no_audio:
+        argv.append("--no-audio")
+    if overwrite:
+        argv.append("--overwrite")
+    if allow_partial:
+        argv.append("--allow-partial")
+    if strict:
+        argv.append("--strict")
+    return argv
+
+
+def status_summary() -> dict:
+    """只读状态摘要（角色/故事覆盖、结果/语音、磁盘、批量进度）。"""
+    from .. import status as status_mod
+
+    return status_mod.collect()
 
 
 def count_translate_tasks(ids, stories_filter: str = "", parts: str = "both") -> int:
