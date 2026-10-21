@@ -7,12 +7,21 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.11", "3.13", "3.14"]
+        include:
+          # ubuntu-latest（26.04）已没有 3.9 的预装版本，固定到 22.04 继续覆盖
+          - python-version: "3.9"
+            os: ubuntu-22.04
+          - python-version: "3.11"
+            os: ubuntu-latest
+          - python-version: "3.13"
+            os: ubuntu-latest
+          - python-version: "3.14"
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 

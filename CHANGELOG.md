@@ -2,6 +2,10 @@
 
 版本号遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)；递增规则与「初始开发阶段（`0.y.z`）」说明见 [README · 版本与变更](README.md#版本与变更)。
 
+## 0.16.1（2026-10-21）
+
+- **修复**：CI 的 Python 3.9 job 固定到 `ubuntu-22.04` —— `ubuntu-latest` 已升级到 26.04，不再提供 3.9 的预装版本，导致 setup-python 直接失败
+
 ## 0.16.0（2026-10-21）
 
 - **新增**：`story-tr status [--json] [--deep]` —— 只读报告角色/故事覆盖、结果与语音数量、视频体积、磁盘占用与批量进度
