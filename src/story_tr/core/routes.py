@@ -50,12 +50,12 @@ def resolve_languages(mode: str, chain: str = "asia", languages: str = "",
 def build_tasks(detected: str, languages: list[str]) -> list[dict[str, str | int]]:
     """按「检出语言 + 语言序列」构建翻译任务列表。
 
-    - `["rwkv20"]`：单任务本地一次成型（`src`/`tgt` 均为目标语言）
+    - `["rwkv20"]`：单任务本地一次成型（英文原文 → 中文）
     - 否则：非英文先 `to_en`，再逐语言 `step`，最后 `to_zh`
     """
     if list(languages) == ["rwkv20"]:
         return [{"kind": "rwkv20", "index": 0, "lang": TARGET_ZH,
-                 "src": TARGET_ZH, "tgt": TARGET_ZH}]
+                 "src": "en", "tgt": TARGET_ZH}]
     tasks: list[dict[str, str | int]] = []
     if detected != "en":
         tasks.append({"kind": "to_en", "lang": "en", "src": detected, "tgt": "en"})

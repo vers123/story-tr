@@ -37,12 +37,12 @@ class Settings(BaseSettings):
 
     # 本地 RWKV（RWKV-Runner）
     rwkv_api_url: str = "http://127.0.0.1:8000"
-    rwkv_prompt_template: str = "User: {text}\\n\\nBot:"
+    rwkv_prompt_template: str = "Translate this into Chinese.\\n\\nEnglish: {text}\\nChinese:"
     rwkv_max_tokens: int = 1024
     rwkv_temperature: float = 1.0
     rwkv_top_p: float = 0.3
     rwkv_timeout: float = 300.0
-    rwkv_chunk_chars: int = 1200
+    rwkv_chunk_chars: int = 600
     rwkv_retries: int = 2
     rwkv_model_path: str = ""
 

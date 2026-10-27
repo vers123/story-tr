@@ -458,6 +458,18 @@ def test_rwkv_probe_unreachable(monkeypatch):
     assert info["error"]
 
 
+def test_rwkv_default_prompt_matches_finetuned_format(monkeypatch):
+    client = FakeClient(post=lambda url, **kw: FakeResponse(
+        payload={"choices": [{"text": " 你好"}]}))
+    _install_client(monkeypatch, client)
+    t = rwkv.RwkvTranslator(_settings())
+    assert t.translate("Hello", "en", "zh-CN") == "你好"
+    payload = client.post_calls[0][1]["json"]
+    assert payload["prompt"] == "Translate this into Chinese.\n\nEnglish: Hello\nChinese:"
+    assert "\n\nEnglish:" in payload["stop"]
+    assert "\n\nChinese:" in payload["stop"]
+
+
 # --------------------------------------------------------------------------- #
 # tts
 # --------------------------------------------------------------------------- #

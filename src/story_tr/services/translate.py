@@ -169,7 +169,8 @@ def _run_chain(text: str, languages: list[str], translators: list[transport.Tran
                 "languages": list(languages), "steps": [], "final": text,
                 "passthrough": True, "rwkv": None,
                 "started_at": started, "finished_at": started}
-    det = source_lang if (source_lang and has_han(text)) else detect_language(text)
+    det = "en" if list(languages) == ["rwkv20"] else (
+        source_lang if (source_lang and has_han(text)) else detect_language(text))
     tasks = build_tasks(det, languages)
     steps: list[models.TranslationStep] = []
     cur = text
@@ -249,7 +250,7 @@ def _parts_label(full_only: bool, segments_only: bool) -> str:
     return "both"
 
 
-def _resolve_stories(home_: str, cid: str, names: list[str]) -> list[str]:
+def _resolve_stories(home_: str, cid: str, names: list[str], src_file: str = "zh.md") -> list[str]:
     base = _io.profile_story_dir(home_, cid)
     if names:
         return names
@@ -258,23 +259,24 @@ def _resolve_stories(home_: str, cid: str, names: list[str]) -> list[str]:
     out: list[str] = []
     for n in sorted(os.listdir(base)):
         if os.path.isdir(os.path.join(base, n)):
-            md = os.path.join(base, n, "zh.md")
+            md = os.path.join(base, n, src_file)
             if os.path.exists(md) and _read_paragraphs(md):
                 out.append(n)
     return out
 
 
-def _build_tasks(home_: str, cid: str, stories: list[str], parts: str) -> list[dict[str, Any]]:
+def _build_tasks(home_: str, cid: str, stories: list[str], parts: str,
+                 src_file: str = "zh.md") -> list[dict[str, Any]]:
     base = _io.profile_story_dir(home_, cid)
     tasks: list[dict[str, Any]] = []
     for story in stories:
-        md = os.path.join(base, story, "zh.md")
+        md = os.path.join(base, story, src_file)
         if not os.path.exists(md):
             log.warning("跳过 %s/%s：找不到 %s", cid, story, _io.rel(home_, md))
             continue
         paras = _read_paragraphs(md)
         if not paras:
-            log.warning("跳过 %s/%s：zh.md 无正文", cid, story)
+            log.warning("跳过 %s/%s：%s 无正文", cid, story, src_file)
             continue
         title = _read_title(md)
         if title:
@@ -305,13 +307,14 @@ def _write_failures(home_: str, failures: list[dict[str, Any]]) -> str:
     return path
 
 
-def _write_summary(home_: str, cid: str, story: str, provider_label: str, mode_label: str) -> None:
+def _write_summary(home_: str, cid: str, story: str, provider_label: str, mode_label: str,
+                   src_file: str = "zh.md") -> None:
     d = os.path.join(_io.result_dir(home_, cid), story)
     if not os.path.isdir(d):
         return
     summary: dict[str, Any] = {
         "id": cid, "story": story,
-        "source_file": _io.rel(home_, os.path.join(_io.profile_story_dir(home_, cid), story, "zh.md")),
+        "source_file": _io.rel(home_, os.path.join(_io.profile_story_dir(home_, cid), story, src_file)),
         "provider": provider_label, "mode": mode_label,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "full": None, "title": None, "segments": [],
@@ -420,6 +423,7 @@ def run(
     state = models.BatchState(signature=sig, completed=sorted(completed), started_at=started_at)
 
     parts = _parts_label(full_only, segments_only)
+    src_file = "en.md" if mode == "rwkv20" else "zh.md"
     provider_label = providers[0] if len(providers) == 1 else " → ".join(providers)
     mode_label = mode + ("/" + chain if mode == "fixed" else "")
 
@@ -484,7 +488,7 @@ def run(
             languages=result["languages"], steps=result["steps"], final=result["final"],
             chain=chain_label, passthrough=result.get("passthrough", False),
             rwkv=result.get("rwkv"), story=task["story"], segment_index=task["index"],
-            source_file=_io.rel(home_, os.path.join(base, task["story"], "zh.md")),
+            source_file=_io.rel(home_, os.path.join(base, task["story"], src_file)),
             started_at=result.get("started_at"), finished_at=result.get("finished_at"))
         _io.atomic_write_json(json_path, tr)
         if not no_tts and not tr.passthrough:
@@ -506,8 +510,9 @@ def run(
                 raise _Abort(ExitCode.CANCELLED)
             base = _io.profile_story_dir(home_, cid)
             story_names = _resolve_stories(home_, cid,
-                                           [s.strip() for s in stories.split(",") if s.strip()])
-            tasks = _build_tasks(home_, cid, story_names, parts) if story_names else []
+                                           [s.strip() for s in stories.split(",") if s.strip()],
+                                           src_file)
+            tasks = _build_tasks(home_, cid, story_names, parts, src_file) if story_names else []
             if not tasks:
                 log.warning("跳过 %s：没有可处理的故事", cid)
                 continue
@@ -540,7 +545,7 @@ def run(
             done_stories = {t["story"] for t in tasks if os.path.exists(
                 os.path.join(_io.result_dir(home_, cid), t["story"], t["key"] + ".json"))}
             for story in done_stories:
-                _write_summary(home_, cid, story, provider_label, mode_label)
+                _write_summary(home_, cid, story, provider_label, mode_label, src_file)
             _emit(event="char_done", char_id=cid, char_index=char_index,
                   chars=len(selected), tasks=len(tasks), done=len(tasks))
 

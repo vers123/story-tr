@@ -36,6 +36,7 @@ TARGET_ZH = "zh-CN"
 BUILTIN_TEMPLATES = (
     "{text}",
     "User: {text}\n\nBot:",
+    "Translate this into Chinese.\n\nEnglish: {text}\nChinese:",
     "User: 把下面这段话翻译20次，然后只输出最终结果：\n{text}\n\nBot:",
     "将下列文本翻译成20种语言再译回中文，只输出译文：\n{text}\n\n",
 )

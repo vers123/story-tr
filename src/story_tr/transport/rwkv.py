@@ -22,7 +22,11 @@ from .base import BaseTranslator, split_chunks
 
 DEFAULT_URL = "http://127.0.0.1:8000"
 MODEL_NAME = "rwkv"
-DEFAULT_STOP = ["\n\nUser", "\n\nBot", "\n\nAssistant", "\n\nHuman", "\n\nQ"]
+DEFAULT_STOP = [
+    "\n\nUser", "\n\nBot", "\n\nAssistant", "\n\nHuman", "\n\nQ",
+    # translate-20times-3B 的训练格式以 English/Chinese 分段，需阻止模型续写下一组
+    "\n\nEnglish:", "\n\nChinese:",
+]
 
 # 中文输出校验：至少含一个汉字（目标始终是中文）
 _HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")

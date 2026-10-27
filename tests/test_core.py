@@ -130,9 +130,12 @@ def test_build_tasks_english_skips_to_en():
     assert tasks[-1] == {"kind": "to_zh", "lang": "zh-CN", "src": "ja", "tgt": "zh-CN"}
 
 
-def test_build_tasks_rwkv20_single():
+def test_build_tasks_rwkv20_uses_english_source():
     assert build_tasks("zh-CN", ["rwkv20"]) == [
-        {"kind": "rwkv20", "index": 0, "lang": "zh-CN", "src": "zh-CN", "tgt": "zh-CN"}
+        {"kind": "rwkv20", "index": 0, "lang": "zh-CN", "src": "en", "tgt": "zh-CN"}
+    ]
+    assert build_tasks("en", ["rwkv20"]) == [
+        {"kind": "rwkv20", "index": 0, "lang": "zh-CN", "src": "en", "tgt": "zh-CN"}
     ]
 
 

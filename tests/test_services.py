@@ -91,6 +91,11 @@ def _setup_workspace(tmp_path: Path) -> Path:
         '---\nid: "10000021"\nstory: vision\nlang: zh\ntitle: "角色详细"\n---\n\n第一段\n\n第二段\n',
         encoding="utf-8",
     )
+    (story_dir / "en.md").write_text(
+        '---\nid: "10000021"\nstory: vision\nlang: en\n'
+        'title: "Character Detail"\n---\n\nFirst paragraph\n\nSecond paragraph\n',
+        encoding="utf-8",
+    )
     (data / "character.json").write_text(
         json.dumps([{"id": "10000021", "name_en": "Amber", "name_zh": "安柏",
                      "path": "data/story/character/10000021", "stories": ["vision"]}],
@@ -229,6 +234,22 @@ def test_translate_model_not_loaded(tmp_path, monkeypatch):
     assert rc == ExitCode.PAUSED
 
 
+def test_translate_rwkv20_reads_english_source(tmp_path, monkeypatch):
+    _setup_workspace(tmp_path)
+    fake = FakeTranslator(name="rwkv", result="这是译文")
+    _mock_translator(monkeypatch, fake)
+    rc = translate.run(["10000021"], stories="vision", mode="rwkv20",
+                       no_tts=True, data_dir=str(tmp_path))
+    assert rc == ExitCode.OK
+
+    rdir = tmp_path / "data" / "story" / "character" / "10000021" / "result" / "vision"
+    data = json.loads((rdir / "seg_01.json").read_text(encoding="utf-8"))
+    assert data["source"] == "First paragraph"
+    assert data["source_file"].endswith("en.md")
+    assert [s["kind"] for s in data["steps"]] == ["rwkv20"]
+    assert data["steps"][0]["text"] == "这是译文"
+
+
 # --------------------------------------------------------------------------- #
 # chain
 # --------------------------------------------------------------------------- #
@@ -243,6 +264,23 @@ def test_chain_writes_out_json(tmp_path, monkeypatch):
     data = json.loads(out_files[0].read_text(encoding="utf-8"))
     assert data["final"] == "译文"
     assert data["source_lang"] == "zh-CN"
+
+
+def test_chain_rwkv20_requires_english(tmp_path):
+    rc = chain.run(text="你好世界", mode="rwkv20", no_tts=True,
+                   no_file_log=True, data_dir=str(tmp_path))
+    assert rc == ExitCode.USAGE
+
+
+def test_chain_rwkv20_uses_english_text(tmp_path, monkeypatch):
+    fake = FakeTranslator(name="rwkv", result="这是译文")
+    _mock_translator(monkeypatch, fake)
+    rc = chain.run(text="Hello, world", mode="rwkv20", no_tts=True,
+                   no_file_log=True, data_dir=str(tmp_path))
+    assert rc == ExitCode.OK
+    data = json.loads(next((tmp_path / "out").glob("*.json")).read_text(encoding="utf-8"))
+    assert data["providers"] == ["rwkv"]
+    assert [s["kind"] for s in data["steps"]] == ["rwkv20"]
 
 
 # --------------------------------------------------------------------------- #

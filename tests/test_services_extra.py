@@ -246,7 +246,7 @@ class TestTranslateStep:
 # chain.run 分支
 # --------------------------------------------------------------------------- #
 def test_chain_dry_run(tmp_path):
-    assert chain_mod.run(text="你好", mode="rwkv20", dry_run=True,
+    assert chain_mod.run(text="Hello", mode="rwkv20", dry_run=True,
                          data_dir=str(tmp_path)) == ExitCode.OK
 
 
@@ -268,7 +268,7 @@ def test_chain_signature_mismatch(tmp_path):
 ])
 def test_chain_run_error_branches(tmp_path, monkeypatch, error, code):
     _mock_translator(monkeypatch, FakeTranslator(name="rwkv", error=error))
-    assert chain_mod.run(text="你好", mode="rwkv20", no_tts=True,
+    assert chain_mod.run(text="Hello", mode="rwkv20", no_tts=True,
                          data_dir=str(tmp_path)) == code
 
 

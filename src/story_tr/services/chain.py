@@ -20,6 +20,7 @@ from story_tr.core import (
     build_signature,
     build_tasks,
     detect_language,
+    has_han,
     resolve_languages,
     signatures_match,
 )
@@ -192,12 +193,15 @@ def run(
     detected = detect_language(text)
     log.info("原文：%s", text)
     log.info("检出语言：%s", detected)
+    if mode == "rwkv20" and has_han(text):
+        log.error("--mode rwkv20 需要英文原文；批量翻译会自动读取 en.md。")
+        return ExitCode.USAGE
     log.info("路线：%s（%d 次）：%s", chain_label, len(langs), " → ".join(langs))
     log.info("后端：%s", " → ".join(providers))
 
     if dry_run:
         if mode == "rwkv20":
-            log.info("本地一次成型：每份 1 次本地生成（不访问云端）")
+            log.info("本地一次成型：读取英文原文，1 次本地生成（不访问云端）")
         log.info("--dry-run：仅展示路线，未执行翻译。")
         return ExitCode.OK
 
