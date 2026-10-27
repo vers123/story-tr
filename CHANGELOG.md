@@ -2,6 +2,14 @@
 
 版本号遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)；递增规则与「初始开发阶段（`0.y.z`）」说明见 [README · 版本与变更](README.md#版本与变更)。
 
+## 1.0.1（2026-10-27）
+
+- **修复**：`rwkv20` 适配 `translate-20times-3B` 的真实训练格式 —— 提示词改为 `Translate this into Chinese.\n\nEnglish: {text}\nChinese:`，并补充 `English/Chinese` 分段停止词，避免模型续写下一组。
+- **变更**：批量 `translate --mode rwkv20` 直接读取故事目录下的 `en.md`（官方英文原文），不再把中文原文送入模型；`source_file` 同步指向 `en.md`，缺失 `en.md` 的故事跳过并告警。
+- **变更**：单文本 `chain --mode rwkv20` 要求英文输入（含汉字直接报错），与模型输入格式一致。
+- **优化**：本地分块默认值 1200 → 600 字符，避免超出模型上下文；`eval` 内置模板加入该模型格式，便于对比评分。
+- **质量**：新增 rwkv20 英文源文件、提示词格式与停止词回归测试（269 passed，ruff/mypy 通过）。
+
 ## 1.0.0（2026-10-27）
 
 - **破坏性**：整体重写；移除 GUI/MCP/video；不兼容 0.x CLI 参数 / 结果 JSON / 数据目录 / 状态文件 / 包 API，无迁移。

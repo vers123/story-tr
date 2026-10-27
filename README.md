@@ -2,7 +2,7 @@
 
 原神角色故事双语（中 / 英）文本抓取 + 「来回翻译 N 次」链路工具。
 
-**版本 v1.0.0** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE) · 最低 Python 3.10
+**版本 v1.0.1** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE) · 最低 Python 3.10
 
 > **免责声明**：本项目仅用于学习与技术研究，不包含、不分发任何游戏资源或数据；与米哈游（miHoYo / HoYoverse）及其关联公司无任何关系。
 >
@@ -328,17 +328,19 @@ story-tr eval --limit 20 --templates builtin   # 校准提示词模板
 | 变量 | 说明 | 默认 |
 | --- | --- | --- |
 | `RWKV_API_URL` | 本地 RWKV-Runner 服务地址 | `http://127.0.0.1:8000` |
-| `RWKV_PROMPT_TEMPLATE` | 提示词模板（占位符 `{text}` / `{src}` / `{tgt}`；`\n` 按换行解析） | `User: {text}\n\nBot:` |
+| `RWKV_PROMPT_TEMPLATE` | 提示词模板（占位符 `{text}` / `{src}` / `{tgt}`；`\n` 按换行解析） | `Translate this into Chinese.\n\nEnglish: {text}\nChinese:` |
 | `RWKV_MAX_TOKENS` | 单次生成上限 | `1024` |
 | `RWKV_TEMPERATURE` | 采样温度 | `1.0` |
 | `RWKV_TOP_P` | 采样 `top_p` | `0.3` |
 | `RWKV_TIMEOUT` | 单次请求超时（秒） | `300` |
-| `RWKV_CHUNK_CHARS` | 长文本分块阈值 | `1200` |
+| `RWKV_CHUNK_CHARS` | 长文本分块阈值 | `600` |
 | `RWKV_RETRIES` | 业务失败重试次数 | `2` |
 | `RWKV_MODEL_PATH` | 模型文件路径（仅用于 `status` / `doctor` 检查文件是否存在） | 空 |
 
 - `--mode rwkv20` 自动使用本地 `rwkv` 后端（无需 `--provider`）；`--provider rwkv` 仅能与 `--mode rwkv20` 搭配。
+- `rwkv20` 的输入必须是英文：批量翻译直接读取故事目录下的 `en.md`（官方英文原文），`chain` 则要求传入英文文本；缺失 `en.md` 的故事会被跳过并记录日志。
 - 调用方式：RWKV-Runner 的 OpenAI 兼容接口（`POST /v1/completions`、`GET /status`、`GET /v1/models`）。
+- `translate-20times-3B` 必须使用上面的 `English/Chinese` 指令模板；RWKV-Runner 上下文建议 ≥2048，避免长段落被截断。
 - 服务不可达 → 退出码 `5`；模型未加载（含 `model not loaded`）→ 退出码 `4`，均快速失败。
 - 结果结构与云端一致（`languages=["rwkv20"]`、`steps` 仅 1 项），产物仍在 `result/{story}/`。
 - 改变本地 URL / 模板 / 采样参数后需加 `--reset`（签名不一致退出码 `3`）。
