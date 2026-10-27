@@ -192,11 +192,20 @@ def run_chain_many(texts, languages, providers, cfg, log, extras=None, source_la
         for k, task in enumerate(tc.build_tasks(det, languages)):
             provider, outs = tc.translate_step_many(
                 [cur[i] for i in idx], task["src"], task["tgt"], providers, cfg, log)
+            metas = tc.local_metas()
+            # 逐条文本的元数据；条数对不上（合并请求等）时退回整批合计
+            per_text = len(metas) == len(idx)
+            fallback = None if per_text else tc.local_meta()
             for pos, i in enumerate(idx):
                 cur[i] = outs[pos]
-                steps[i].append({"index": k, "kind": task["kind"], "lang": task["lang"],
-                                 "provider": provider, "text": outs[pos]})
+                step = {"index": k, "kind": task["kind"], "lang": task["lang"],
+                        "provider": provider, "text": outs[pos]}
+                meta = metas[pos] if per_text else fallback
+                if meta:
+                    step["rwkv"] = dict(meta)
+                steps[i].append(step)
         for i in idx:
+            merged = tc.merge_local_meta([s.get("rwkv") for s in steps[i] if s.get("rwkv")])
             results[i] = {
                 "source": texts[i],
                 "source_detected_lang": det,
@@ -208,6 +217,8 @@ def run_chain_many(texts, languages, providers, cfg, log, extras=None, source_la
                 "started_at": started,
                 "finished_at": datetime.now().isoformat(timespec="seconds"),
             }
+            if merged:
+                results[i]["rwkv"] = merged
             results[i].update(extras[i])
     return results
 
@@ -365,7 +376,7 @@ def resolve_stories(args, char_id):
     return out
 
 
-def signature(args, char_ids):
+def signature(args, char_ids, cfg=None):
     all_stories = args.all or not args.stories.strip()
     sig = {"characters": char_ids,
            "stories": "ALL" if all_stories else [s.strip() for s in args.stories.split(",") if s.strip()],
@@ -374,6 +385,9 @@ def signature(args, char_ids):
            "steps": args.steps if args.mode == "random" else None,
            "languages": args.languages if args.mode == "custom" else None,
            "provider": args.provider}
+    if args.mode == "rwkv20" or args.provider == "rwkv":
+        cfg_local = (cfg or {}).get("rwkv") or tc.local_rwkv.from_args(args)
+        sig["rwkv"] = tc.local_rwkv.signature(cfg_local)
     parts = parts_label(args)
     if parts != "both":  # 只产出部分内容时任务集合不同，需写进签名；默认不写以兼容旧状态
         sig["parts"] = parts
@@ -479,6 +493,13 @@ def providers_of(result) -> str:
     return "/".join(seen) if len(seen) <= 2 else "%s/…" % seen[0]
 
 
+def is_fatal_local_error(exc, args, providers) -> bool:
+    """本地模式下「服务不可达 / 模型未加载」是致命的：中止整批，返回 5/4。
+    业务失败（Paused 且非 ModelNotLoaded）仍按部分失败处理（7）。"""
+    local = getattr(args, "mode", None) == "rwkv20" or "rwkv" in list(providers)
+    return local and isinstance(exc, (tc.ConnectionIssue, tc.ModelNotLoaded))
+
+
 def result_is_stale(json_path: str, source: str) -> bool:
     """已有结果是否与当前源文不一致（`--revalidate` 用）。"""
     try:
@@ -508,13 +529,17 @@ def write_run_summary(info: dict) -> str:
     return path
 
 
-def title_cache_key(text: str, args, providers) -> str:
+def title_cache_key(text: str, args, providers, cfg=None) -> str:
     """标题译文缓存键：文本 + 路线 + 后端顺序（random 模式不缓存）。"""
     payload = [TITLE_CACHE_VERSION, text, getattr(args, "mode", None),
                getattr(args, "chain", None) if getattr(args, "mode", None) == "fixed" else None,
                getattr(args, "languages", "") if getattr(args, "mode", None) == "custom" else None,
                getattr(args, "steps", None) if getattr(args, "mode", None) == "random" else None,
                list(providers)]
+    if "rwkv" in list(providers):
+        # 本地模板/采样参数会改变结果，必须进缓存键；其它模式保持原 key 不变
+        cfg_local = (cfg or {}).get("rwkv") or tc.local_rwkv.from_args(args)
+        payload.append(tc.local_rwkv.signature(cfg_local))
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
@@ -557,6 +582,8 @@ def _dry_run(args, char_ids) -> int:
           % (len(char_ids), active, sum(len(resolve_stories(args, c)) for c in char_ids), total))
     print("路线：%s（%d 步/份；含 to_en 与 to_zh 共 %d 步）"
           % (label, len(languages), steps_per_item))
+    if args.mode == "rwkv20":
+        print("本地一次成型：预计本地生成约 %d 次（每份 1 次）" % total)
     print("预计步骤调用：约 %d 次；批量%s（实际请求数会因合并而更少）"
           % (total * steps_per_item, "开启" if batch else "关闭"))
     if args.mode == "random":
@@ -584,6 +611,11 @@ def main(args, on_progress=None, cancel=None) -> int:
         args.no_file_log or bool(getattr(args, "dry_run", False)),
         report.console_level(args))
     cfg = tc.build_cfg(args)
+    providers, err = tc.resolve_providers(args)
+    if err:
+        print(err)
+        return ExitCode.USAGE
+    args.no_tts = not tc.tts_enabled(args)
 
     def _notify(**kw):
         """回调进度；回调自身出错不影响翻译。"""
@@ -593,7 +625,6 @@ def main(args, on_progress=None, cancel=None) -> int:
             except Exception:  # noqa: BLE001
                 pass
 
-    providers = [args.provider] if args.provider else ["google", "bing", "baidu"]
     provider_label = providers[0] if len(providers) == 1 else " → ".join(providers)
     parts = parts_label(args)
     batch = not args.no_batch and args.mode != "random"  # random 下每份独立随机，不做批量
@@ -612,7 +643,7 @@ def main(args, on_progress=None, cancel=None) -> int:
         log.warning("random 模式为每份结果独立随机，且会关闭批量；调用量约为 "
                     "fixed+批量 的 20 倍，全量可能触及 Google 免费端点 20 万/天配额。")
 
-    sig = signature(args, char_ids)
+    sig = signature(args, char_ids, cfg)
     state, completed, err = prepare_state(load_state(), sig, args.reset)
     if err:
         print(err)
@@ -750,7 +781,7 @@ def main(args, on_progress=None, cancel=None) -> int:
                         if _skip_it(t, json_path):
                             continue
                         if use_cache and t["key"] == "title":
-                            key = title_cache_key(t["text"], args, providers)
+                            key = title_cache_key(t["text"], args, providers, cfg)
                             with cache_lock:
                                 hit = title_cache.get(key)
                             if hit:
@@ -786,6 +817,9 @@ def main(args, on_progress=None, cancel=None) -> int:
                     except tc.ChainError as exc:
                         if fail_fast:
                             raise
+                        if is_fatal_local_error(exc, args, providers):
+                            log.error("本地 RWKV 不可用，已中止本批：%s", exc)
+                            raise
                         keys = [t["key"] for t, _, _ in todo]
                         failed_stories = sorted({t["story"] for t, _, _ in todo})
                         with state_lock:
@@ -799,7 +833,7 @@ def main(args, on_progress=None, cancel=None) -> int:
                     for (t, json_path, mp3_path), res in zip(todo, results):
                         _save(t, json_path, mp3_path, res, dt if n == 1 else None)
                         if use_cache and t["key"] == "title":
-                            key = title_cache_key(t["text"], args, providers)
+                            key = title_cache_key(t["text"], args, providers, cfg)
                             value = {k: v for k, v in res.items()
                                      if k not in ("story", "segment_index",
                                                   "source_file", "mode", "chain")}

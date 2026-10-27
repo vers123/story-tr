@@ -33,6 +33,8 @@ def _workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(stories, "STORY_ROOT", str(data / "story" / "character"))
     monkeypatch.setattr(stories, "CHAR_FILE", str(data / "character.json"))
     monkeypatch.setattr(stories, "STATE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.delenv("RWKV_API_URL", raising=False)
+    monkeypatch.delenv("RWKV_MODEL_PATH", raising=False)
     return tmp_path
 
 
@@ -83,3 +85,45 @@ def test_write_manifest(tmp_path, monkeypatch):
     assert path.endswith("manifest.json")
     assert data["characters"] == 1 and data["stories"] == 1
     assert data["hashes"] == {"1": "abc"}
+
+
+def test_collect_loads_dotenv(tmp_path, monkeypatch):
+    _workspace(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(status.rwkv, "load_env", lambda home=None: calls.append(home))
+    status.collect()
+    assert calls == [str(tmp_path)]
+
+
+def test_collect_has_rwkv_without_probe(tmp_path, monkeypatch):
+    _workspace(tmp_path, monkeypatch)
+
+    def _no_probe(*args, **kwargs):
+        raise AssertionError("should not probe")
+
+    monkeypatch.setattr(status.rwkv, "probe", _no_probe)
+    info = status.collect()
+    assert info["rwkv"]["url"] == "http://127.0.0.1:8000"
+    assert info["rwkv"]["probe"] is None
+
+
+def test_render_contains_rwkv_line(tmp_path, monkeypatch):
+    _workspace(tmp_path, monkeypatch)
+    text = status.render(status.collect())
+    assert "本地 RWKV：" in text
+
+
+def test_main_json_contains_rwkv(tmp_path, monkeypatch, capsys):
+    _workspace(tmp_path, monkeypatch)
+    assert status.main(types.SimpleNamespace(json=True, deep=False)) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert "rwkv" in data
+
+
+def test_probe_fills_status(tmp_path, monkeypatch):
+    _workspace(tmp_path, monkeypatch)
+    monkeypatch.setattr(status.rwkv, "probe", lambda cfg=None, **kw: {
+        "reachable": True, "status": "Working",
+        "model": "translate-20times-3B", "error": None})
+    info = status.collect(probe=True)
+    assert info["rwkv"]["probe"]["status"] == "Working"

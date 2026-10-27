@@ -225,6 +225,79 @@ def test_chain_resolves_languages(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# P2：rwkv20（本地一次成型）
+# --------------------------------------------------------------------------- #
+def test_translate_argv_rwkv20(ws):
+    argv = tools.translate_argv("1", mode="rwkv20", rwkv_url="http://127.0.0.1:8001",
+                                rwkv_template="User: {text}\n\nBot:")
+    assert argv[argv.index("--mode") + 1] == "rwkv20"
+    assert "--chain" not in argv
+    assert "--languages" not in argv
+    assert "--steps" not in argv
+    assert argv[argv.index("--provider") + 1] == "rwkv"
+    assert argv[argv.index("--rwkv-url") + 1] == "http://127.0.0.1:8001"
+    assert argv[argv.index("--rwkv-template") + 1] == "User: {text}\n\nBot:"
+
+
+def test_chain_rwkv20_uses_local_provider(monkeypatch):
+    monkeypatch.setenv("RWKV_API_URL", "")  # 阻断 .env 覆盖，取默认地址
+    captured = {}
+
+    def fake_run_chain(text, languages, providers, cfg, log, extra):
+        captured.update(providers=list(providers), cfg=cfg, languages=list(languages))
+        return {"source": text, "source_detected_lang": "zh-CN", "provider": "rwkv",
+                "steps": [], "final": "F", "rwkv": {"url": cfg["rwkv"].url}}
+
+    monkeypatch.setattr(stories, "run_chain", fake_run_chain)
+    out = tools.chain("hi", mode="rwkv20")
+    assert captured["providers"] == ["rwkv"]
+    assert captured["cfg"]["rwkv"].url == "http://127.0.0.1:8000"
+    assert out["rwkv"]["url"] == "http://127.0.0.1:8000"
+
+
+def test_chain_rwkv20_rejects_other_provider():
+    with pytest.raises(ValueError):
+        tools.chain("hi", mode="rwkv20", provider="google")
+
+
+def test_chain_rwkv_requires_rwkv20():
+    with pytest.raises(ValueError):
+        tools.chain("hi", mode="fixed", provider="rwkv")
+
+
+def test_rwkv_status_offline_by_default(monkeypatch):
+    def fail_probe(*args, **kwargs):
+        raise AssertionError("probe=False 不应联网")
+
+    monkeypatch.setattr(tools.rwkv, "probe", fail_probe)
+    out = tools.rwkv_status()
+    assert out["reachable"] is None
+    assert out["status"] is None
+    assert out["model"] is None
+    assert out["error"] is None
+    assert out["url"]
+    assert isinstance(out["configured"], bool)
+    assert isinstance(out["template_present"], bool)
+
+
+def test_rwkv_status_probe(monkeypatch):
+    seen = {}
+
+    def fake_probe(cfg, *args, **kwargs):
+        seen["url"] = cfg.url
+        return {"reachable": True, "status": "Working",
+                "model": "translate-20times-3B", "error": None}
+
+    monkeypatch.setattr(tools.rwkv, "probe", fake_probe)
+    out = tools.rwkv_status(probe=True)
+    assert seen["url"] == out["url"]
+    assert out["reachable"] is True
+    assert out["status"] == "Working"
+    assert out["model"] == "translate-20times-3B"
+    assert out["error"] is None
+
+
+# --------------------------------------------------------------------------- #
 # P2：clean（默认只预览）
 # --------------------------------------------------------------------------- #
 def _seed_result(ws):

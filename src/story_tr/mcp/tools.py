@@ -2,6 +2,7 @@
 """MCP Tool 函数（纯 Python，**不依赖 mcp**）。
 
 - 只读：`list_characters` / `list_stories` / `get_result_summary` / `read_result_item`
+- 只读（本地后端）：`rwkv_status`（默认不联网，`probe=True` 才探测）
 - 同步（含联网）：`chain`（单条文本翻译链）、`clean`（默认 `dry_run` 只预览）
 - 长任务：`translate_argv` / `fetch_argv`（生成命令行，交给 `jobs` 以子进程执行）
 
@@ -22,7 +23,7 @@ import sys
 import types
 
 from .. import chain as tc
-from .. import paths, stories
+from .. import paths, rwkv, stories
 
 # 结果明细的合法 key：full / title / seg_NN
 RESULT_KEY_RE = re.compile(r"(?:full|title|seg_\d+)")
@@ -165,10 +166,12 @@ def _base_argv() -> list:
 def translate_argv(char_ids: str, stories_filter: str = "", mode: str = "fixed",
                    chain: str = "asia", workers: int = 1, provider: str = "",
                    full_only: bool = False, segments_only: bool = False,
-                   languages: str = "") -> list:
+                   languages: str = "", rwkv_url: str = "",
+                   rwkv_template: str = "") -> list:
     """构造 `story-tr translate` 的命令行（安全子集，不含 --overwrite / --reset）。
 
     `mode="custom"` **必须**同时给 `languages`（逗号分隔），否则 CLI 会直接报错退出。
+    `mode="rwkv20"` 为本地一次成型：不传链 / 语言，后端缺省为 `rwkv`。
     """
     argv = _base_argv() + ["translate", char_ids]
     if stories_filter:
@@ -178,6 +181,8 @@ def translate_argv(char_ids: str, stories_filter: str = "", mode: str = "fixed",
         argv += ["--chain", chain]
     if mode == "custom" and languages.strip():
         argv += ["--languages", languages.strip()]
+    if mode == "rwkv20" and not provider:
+        provider = "rwkv"
     argv += ["--workers", str(int(workers))]
     if provider:
         argv += ["--provider", provider]
@@ -185,6 +190,10 @@ def translate_argv(char_ids: str, stories_filter: str = "", mode: str = "fixed",
         argv.append("--full-only")
     if segments_only:
         argv.append("--segments-only")
+    if rwkv_url:
+        argv += ["--rwkv-url", rwkv_url]
+    if rwkv_template:
+        argv += ["--rwkv-template", rwkv_template]
     return argv
 
 
@@ -300,18 +309,44 @@ def _mcp_logger() -> logging.Logger:
 
 
 def chain(text: str, mode: str = "fixed", chain: str = "asia", languages: str = "",
-          steps: int = 20, provider: str = "") -> dict:
-    """单条文本跑「来回翻译 N 次」链路（同步、联网），返回逐步与最终译文。"""
-    args = types.SimpleNamespace(mode=mode, chain=chain, steps=steps, languages=languages)
+          steps: int = 20, provider: str = "", rwkv_url: str = "",
+          rwkv_template: str = "") -> dict:
+    """单条文本跑「来回翻译 N 次」链路（同步、联网），返回逐步与最终译文。
+
+    `mode="rwkv20"` 走本地 RWKV 一次成型（`provider` 缺省 `rwkv`，不联网）。
+    """
+    args = types.SimpleNamespace(mode=mode, chain=chain, steps=steps, languages=languages,
+                                 provider=provider, proxy="",
+                                 min_interval=tc.GOOGLE_MIN_INTERVAL, balance=False,
+                                 rwkv_url=rwkv_url, rwkv_template=rwkv_template)
     langs, label = tc.resolve_languages(args)
-    cfg = tc.build_cfg(types.SimpleNamespace(proxy="", min_interval=tc.GOOGLE_MIN_INTERVAL,
-                                             balance=False))
-    providers = [provider] if provider else ["google", "bing", "baidu"]
+    providers, err = tc.resolve_providers(args)
+    if err:
+        raise ValueError(err)
+    cfg = tc.build_cfg(args)
     result = stories.run_chain(text, langs, providers, cfg, _mcp_logger(),
                                {"mode": mode, "chain": label})
-    return {"source": result["source"], "detected": result["source_detected_lang"],
-            "languages": langs, "provider": result["provider"],
-            "steps": result["steps"], "final": result["final"]}
+    out = {"source": result["source"], "detected": result["source_detected_lang"],
+           "languages": langs, "provider": result["provider"],
+           "steps": result["steps"], "final": result["final"]}
+    if result.get("rwkv"):
+        out["rwkv"] = result["rwkv"]
+    return out
+
+
+def rwkv_status(probe: bool = False) -> dict:
+    """本地 RWKV 配置与服务状态；probe=False 时不联网。"""
+    rwkv.load_env()
+    cfg = rwkv.from_env()
+    out = {"url": cfg.url,
+           "configured": bool(os.environ.get("RWKV_API_URL")),
+           "template_present": bool(cfg.template.strip()),
+           "reachable": None, "status": None, "model": None, "error": None}
+    if probe:
+        got = rwkv.probe(cfg)
+        for key in ("reachable", "status", "model", "error"):
+            out[key] = got.get(key)
+    return out
 
 
 # --------------------------------------------------------------------------- #

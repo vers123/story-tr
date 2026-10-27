@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """`story-tr status`：只读报告工作目录、数据覆盖、结果/语音/视频与批量进度。
 
-不联网、不修改任何文件（状态文件损坏时只报告，不自动修复）。
+默认不联网、不修改任何文件（状态文件损坏时只报告，不自动修复）；
+只有显式 `--probe` 才访问本地 RWKV 服务（`/status`、`/v1/models`）。
 """
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ import json
 import os
 from datetime import datetime
 
-from . import paths, statefile, stories
+from . import paths, rwkv, statefile, stories
 
 
 def _dir_size(path: str):
@@ -46,9 +47,13 @@ def _read_state(path: str):
         return None, str(exc)
 
 
-def collect(deep: bool = False) -> dict:
-    """收集状态；`deep=True` 时额外扫描每个 seg JSON 的语言分布。"""
+def collect(deep: bool = False, probe: bool = False) -> dict:
+    """收集状态；`deep=True` 时额外扫描每个 seg JSON 的语言分布。
+
+    `probe=False`（默认）不联网；`probe=True` 时额外访问本地 RWKV 服务。
+    """
     home = paths.home()
+    rwkv.load_env(home)
     char_file = stories.CHAR_FILE
     chars = []
     if os.path.exists(char_file):
@@ -118,6 +123,21 @@ def collect(deep: bool = False) -> dict:
             "signature": state.get("signature"),
         }
 
+    cfg = rwkv.from_env()
+    model_path = os.environ.get("RWKV_MODEL_PATH", "").strip()
+    info["rwkv"] = {
+        "url": cfg.url,
+        "template_present": bool((cfg.template or "").strip()),
+        "model_path": model_path or None,
+        "model_path_exists": bool(model_path and os.path.exists(model_path)),
+        "probe": None,
+    }
+    if probe:
+        try:
+            info["rwkv"]["probe"] = rwkv.probe(cfg)
+        except Exception as exc:  # noqa: BLE001 - 探测失败只报告，不中断 status
+            info["rwkv"]["probe"] = {"reachable": False, "error": str(exc)}
+
     if deep:
         langs = {}
         for path in glob.glob(os.path.join(pattern, "seg_*.json")):
@@ -150,6 +170,27 @@ def render(info: dict) -> str:
         % (_human(info["data_bytes"]), info["data_files"],
            _human(info["log_bytes"]), info["log_files"]),
     ]
+    rwkv_info = info.get("rwkv")
+    if rwkv_info:
+        model_path = rwkv_info.get("model_path")
+        if not model_path:
+            model_detail = "未配置 RWKV_MODEL_PATH"
+        elif rwkv_info.get("model_path_exists"):
+            model_detail = "模型文件存在"
+        else:
+            model_detail = "模型文件不存在: %s" % model_path
+        line = "本地 RWKV：%s（%s；%s）" % (
+            rwkv_info.get("url"),
+            "模板已配置" if rwkv_info.get("template_present") else "模板为空",
+            model_detail)
+        probed = rwkv_info.get("probe")
+        if probed:
+            if probed.get("reachable"):
+                line += "；服务 %s，模型 %s" % (probed.get("status") or "未知",
+                                               probed.get("model") or "未知")
+            else:
+                line += "；服务不可达：%s" % (probed.get("error") or "未知错误")
+        lines.append(line)
     if info["state"]:
         sig = info["state"].get("signature") or {}
         lines.append("批量状态：%d 条完成；mode=%s chain=%s steps=%s parts=%s provider=%s；更新于 %s"
@@ -201,6 +242,8 @@ def add_parser(sub):
                    help="额外扫描段落语言分布（较慢，需读取全部 seg JSON）")
     p.add_argument("--manifest", action="store_true",
                    help="把角色/故事/结果统计与抓取 hash 写入 data/manifest.json")
+    p.add_argument("--probe", action="store_true",
+                   help="额外访问本地 RWKV 服务，默认不联网")
     p.set_defaults(func=main)
     return p
 
@@ -210,7 +253,8 @@ def main(args) -> int:
         print("找不到 %s；请先运行 story-tr fetch（或检查 --data-dir）。"
               % stories.CHAR_FILE)
         return 1
-    info = collect(deep=getattr(args, "deep", False))
+    info = collect(deep=getattr(args, "deep", False),
+                   probe=getattr(args, "probe", False))
     manifest_path = write_manifest(info) if getattr(args, "manifest", False) else None
     if getattr(args, "json", False):
         print(json.dumps(info, ensure_ascii=False, indent=2))

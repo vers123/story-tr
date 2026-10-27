@@ -4,7 +4,8 @@ import pytest
 
 from story_tr import __version__, cli
 
-SUBCOMMANDS = ("fetch", "folders", "chain", "translate", "clean", "video", "status")
+SUBCOMMANDS = ("fetch", "folders", "chain", "translate", "clean", "video", "status",
+               "rwkv-eval")
 
 
 def test_version(capsys):
@@ -55,6 +56,20 @@ def test_translate_parses_char_ids_and_options(monkeypatch):
     assert args.min_interval == 0.25
     assert args.mode == "fixed"
     assert args.data_dir
+
+
+def test_translate_parses_rwkv_mode(monkeypatch):
+    from story_tr import stories
+
+    seen = {}
+    monkeypatch.setattr(stories, "main", lambda a: (seen.setdefault("args", a), 0)[1])
+    rc = cli.main(["translate", "1", "--mode", "rwkv20",
+                   "--rwkv-url", "http://127.0.0.1:9000",
+                   "--rwkv-template", "T:{text}", "--tts"])
+    assert rc == 0
+    args = seen["args"]
+    assert args.mode == "rwkv20" and args.tts is True
+    assert args.rwkv_url == "http://127.0.0.1:9000" and args.rwkv_template == "T:{text}"
 
 
 def test_data_dir_before_subcommand(monkeypatch, tmp_path):

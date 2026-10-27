@@ -158,6 +158,48 @@ def test_mode_switch_greys_dependent_fields(qapp):
     assert tab.steps.isEnabled() and not tab.chain.isEnabled()
     tab.mode_btns["custom"].setChecked(True)
     assert tab.custom_langs.isEnabled() and not tab.steps.isEnabled()
+    tab.mode_btns["rwkv20"].setChecked(True)
+    assert not tab.chain.isEnabled() and not tab.custom_langs.isEnabled() \
+        and not tab.steps.isEnabled()
+
+
+def test_rwkv20_greys_provider_and_builds_argv(qapp):
+    """rwkv20 自动使用本地后端：后端下拉置灰，argv 带 --mode/--provider/--rwkv-url。"""
+    from story_tr.gui import argv as gargv
+
+    tab = gapp.TranslateTab()
+    tab.mode_btns["rwkv20"].setChecked(True)
+    tab._sync_mode()
+    assert tab.provider.isEnabled() is False
+
+    tab.char_ids.setText("1")
+    tab.rwkv_url.setText("http://127.0.0.1:9000")
+    _, argv_list, _ = tab.build_job()
+    assert argv_list[argv_list.index("--mode") + 1] == "rwkv20"
+    assert argv_list[argv_list.index("--provider") + 1] == "rwkv"
+    assert argv_list[argv_list.index("--rwkv-url") + 1] == "http://127.0.0.1:9000"
+    gargv.parse(argv_list)  # 真实解析器必须接受
+
+
+def test_rwkv_settings_roundtrip(qapp, tmp_path):
+    """本地模型参数（URL / 模板）经 QSettings 存/取一致。"""
+    from PySide6.QtCore import QSettings
+
+    settings = QSettings(str(tmp_path / "rwkv.ini"), QSettings.Format.IniFormat)
+    settings.clear()
+    tab = gapp.TranslateTab()
+    tab.mode_btns["rwkv20"].setChecked(True)
+    tab.rwkv_url.setText("http://127.0.0.1:9000")
+    tab.rwkv_template.setText("User: {text}\n\nBot:")
+    tab.save_settings(settings)
+    settings.sync()
+
+    restored = gapp.TranslateTab()
+    restored.load_settings(settings)
+    assert restored.current_mode() == "rwkv20"
+    assert restored.rwkv_url.text() == "http://127.0.0.1:9000"
+    assert restored.rwkv_template.text() == "User: {text}\n\nBot:"
+    assert restored.provider.isEnabled() is False
 
 
 def test_reset_rerun_adds_reset_flag(qapp):

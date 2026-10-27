@@ -2,6 +2,15 @@
 
 版本号遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)；递增规则与「初始开发阶段（`0.y.z`）」说明见 [README · 版本与变更](README.md#版本与变更)。
 
+## 0.19.0（2026-10-27）
+
+- **新增**：本地 RWKV 后端 —— 通过 RWKV-Runner 的 OpenAI 兼容接口调用 `translate-20times-3B.pth`；新增 `--mode rwkv20`（一次成型，每份结果 1 次本地生成，替代云端 21~23 次请求）
+- **新增**：`--rwkv-url` / `--rwkv-template` / `--rwkv-max-tokens` / `--rwkv-temperature` / `--rwkv-top-p` / `--rwkv-timeout` / `--rwkv-chunk-chars` / `--rwkv-retries` 与 `RWKV_*` 环境变量；`--tts`（`rwkv20` 默认不生成语音）
+- **新增**：`story-tr rwkv-eval` —— 以已有云端结果为基线，评测本地输出并做提示词模板排名（报告写入 `logs/rwkv_eval_*.json|md`）
+- **新增**：`doctor --probe` / `status --probe` 检查本地服务；GUI 增加 `rwkv20` 与本地模型参数组；MCP 增加只读 Tool `rwkv_status`
+- **工程**：`.gitignore` 忽略 `model/`、`models/`、`*.pth`、`*.gguf`；模型权重不入库，README 说明应放在 RWKV-Runner 的 `models/` 及许可注意事项
+- **改进**：本地 RWKV 服务不可达 / 模型未加载时快速失败（退出码 5 / 4），不再套用云端连接退避与重复生成重试
+
 ## 0.18.2（2026-10-21）
 
 - **性能**：Google 免 key 端点改用线程内复用的 `requests.Session`，经代理时单请求从约 2.3s 降到约 0.44s（5 倍），显著加快批量补全

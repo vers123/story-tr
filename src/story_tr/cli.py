@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""story-tr 命令行入口：子命令 `fetch` / `folders` / `clean` / `chain` / `translate` / `video`。"""
+"""story-tr 命令行入口：子命令 `fetch` / `folders` / `clean` / `chain` / `translate` / `video` /
+`status` / `doctor` / `rwkv-eval`。"""
 from __future__ import annotations
 
 import argparse
@@ -11,14 +12,15 @@ from . import __version__, paths
 
 def build_parser() -> argparse.ArgumentParser:
     """构建完整解析器（调用时各子模块会按已定的工作目录完成导入）。"""
-    from . import chain, clean, doctor, folders, status, stories, sync, video
+    from . import chain, clean, doctor, folders, rwkv_eval, status, stories, sync, video
 
     p = argparse.ArgumentParser(
         prog="story-tr",
         description="原神角色故事双语文本：数据抓取/校正 与「来回翻译 N 次」链路",
         parents=[paths.data_dir_parent()],
         epilog="示例：story-tr fetch   |   story-tr translate 10000002-10000030 --workers 4   |   "
-               "story-tr chain \"Hello, World\"   |   story-tr clean 10000021",
+               "story-tr chain \"Hello, World\"   |   story-tr clean 10000021   |   "
+               "story-tr rwkv-eval --all-characters --templates builtin",
     )
     p.add_argument("--version", action="version", version="story-tr %s" % __version__)
     sub = p.add_subparsers(dest="command", required=True, metavar="<子命令>")
@@ -30,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     video.add_parser(sub)
     status.add_parser(sub)
     doctor.add_parser(sub)
+    rwkv_eval.add_parser(sub)
     return p
 
 

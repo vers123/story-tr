@@ -31,6 +31,7 @@ INSTRUCTIONS = (
     "只读：列出角色与故事、读取故事的中/英原文、读取已有翻译结果。\n"
     "写/长任务：chain（单条文本翻译，同步）；translate_start / fetch_start（异步，"
     "返回 job_id，用 job_status 查询、job_cancel 取消）；clean（默认只预览）。\n"
+    "rwkv20：本地 RWKV 一次成型，需先启动 RWKV-Runner（默认 127.0.0.1:8000）；无密钥。\n"
     "数据来自本地 data/ 目录（未入库，需先由 fetch 生成、translate 产出结果）。"
 )
 
@@ -125,13 +126,20 @@ def build_server() -> MCPServer:
     def status() -> dict:
         return tools.status_summary()
 
+    @server.tool(description="查询本地 RWKV 配置与服务状态（probe=false 时不联网）")
+    @_tool_errors
+    def rwkv_status(probe: bool = False) -> dict:
+        return tools.rwkv_status(probe=probe)
+
     # ---- Tools：同步（含联网 / 写盘） ----
     @server.tool(description="单条文本跑「来回翻译 N 次」链路（联网，同步返回逐步与最终译文）")
     @_tool_errors
     def chain(text: str, mode: str = "fixed", chain: str = "asia", languages: str = "",
-              steps: int = 20, provider: str = "") -> dict:
+              steps: int = 20, provider: str = "", rwkv_url: str = "",
+              rwkv_template: str = "") -> dict:
         return tools.chain(text, mode=mode, chain=chain, languages=languages,
-                           steps=steps, provider=provider)
+                           steps=steps, provider=provider,
+                           rwkv_url=rwkv_url, rwkv_template=rwkv_template)
 
     @server.tool(description="清理结果目录（默认只预览；dry_run=false 且 confirm=true 才真删）")
     @_tool_errors
@@ -146,19 +154,29 @@ def build_server() -> MCPServer:
     def translate_start(char_ids: str, stories: str = "", mode: str = "fixed",
                         chain: str = "asia", workers: int = 1, provider: str = "",
                         full_only: bool = False, segments_only: bool = False,
-                        languages: str = "") -> dict:
+                        languages: str = "", rwkv_url: str = "",
+                        rwkv_template: str = "") -> dict:
         ids = tools.resolve_ids(char_ids)
         if not ids:
             raise ValueError("没有匹配到任何角色 id：%s" % char_ids)
         if mode == "custom" and not languages.strip():
             raise ValueError('mode="custom" 需要用 languages 指定语言序列（逗号分隔），'
                              '如 languages="en,ja"；其他模式请用 mode="fixed" 或 "random"。')
+        if mode == "rwkv20":
+            chain = ""
+            provider = provider or "rwkv"
+            if provider != "rwkv":
+                raise ValueError("mode=rwkv20 只支持本地后端 rwkv")
+        elif provider == "rwkv":
+            raise ValueError("provider=rwkv 仅能与 mode=rwkv20 搭配")
         parts = "full" if full_only else "segments" if segments_only else "both"
         total = tools.count_translate_tasks(ids, stories, parts)
         job = jobs.manager().submit(
             "translate",
-            tools.translate_argv(char_ids, stories, mode, chain, workers, provider,
-                                 full_only, segments_only, languages),
+            tools.translate_argv(char_ids, stories_filter=stories, mode=mode, chain=chain,
+                                 workers=workers, provider=provider, full_only=full_only,
+                                 segments_only=segments_only, languages=languages,
+                                 rwkv_url=rwkv_url, rwkv_template=rwkv_template),
             progress_fn=tools.make_translate_progress(ids, total))
         out = job.summary()
         out["characters"] = len(ids)

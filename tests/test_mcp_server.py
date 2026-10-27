@@ -17,7 +17,16 @@ def test_registers_tools():
     names = sorted(t.name for t in asyncio.run(s.list_tools()))
     assert names == ["chain", "clean", "fetch_start", "get_result_summary", "job_cancel",
                      "job_list", "job_status", "list_characters", "list_stories",
-                     "read_result_item", "status", "translate_start", "video_start"]
+                     "read_result_item", "rwkv_status", "status", "translate_start",
+                     "video_start"]
+
+
+def test_rwkv_status_registered_with_probe():
+    s = server.build_server()
+    tool = {t.name: t for t in asyncio.run(s.list_tools())}["rwkv_status"]
+    data = tool.model_dump()
+    schema = data.get("input_schema") or data.get("inputSchema") or {}
+    assert "probe" in (schema.get("properties") or {})
 
 
 def test_registers_resources_and_templates():

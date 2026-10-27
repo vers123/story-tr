@@ -2,7 +2,7 @@
 
 原神角色故事文本仓库（中文 / 英文对照），用于翻译。
 
-**版本 `v0.18.2`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
+**版本 `v0.19.0`** · 遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/) · 许可 [MIT](LICENSE)
 
 > **数据未入库**：`data/`（角色故事、`character.json` 等）**不在仓库中** —— 它体积大，且可由脚本完整重建。克隆后请先按「[快速开始](#快速开始)」生成。
 >
@@ -21,6 +21,7 @@
 - [数据约定](#数据约定)
 - [数据文件说明](#数据文件说明)
 - [命令（CLI）](#命令cli)
+- [本地 RWKV（一次成型）](#本地-rwkv一次成型)
 - [MCP Server](#mcp-server)
 - [桌面界面（GUI）](#桌面界面gui)
 - [依赖与许可](#依赖与许可)
@@ -243,6 +244,7 @@ story-tr fetch --refresh
 ├── out/                                # translate_chain 的结果 json/mp3（不入库）
 ├── dist/ / build/                      # python -m build 的产物 *.whl / *.tar.gz（不入库）
 ├── .venv/                              # 虚拟环境（不入库）
+├── model/                              # 本地模型权重（不入库；建议移至 RWKV-Runner 的 models/）
 ├── .env                                # 密钥配置（不入库，见 .env.example）
 ├── pyproject.toml                      # 打包元数据 + 入口点 + ruff/pytest 配置
 ├── main.py                             # 兼容入口：python main.py <子命令>
@@ -358,6 +360,7 @@ title: "角色详细"
 | `story-tr video <id/范围>` | 把翻译结果渲染成「谷歌翻译 N 次」视频（B 站 1080P） |
 | `story-tr status [--json] [--deep]` | 只读报告角色/故事覆盖、结果与语音数量、磁盘占用、批量进度 |
 | `story-tr doctor` | 检查数据、可选依赖、ffmpeg、字体、密钥与状态文件 |
+| `story-tr rwkv-eval [--limit N] [--templates builtin]` | 用已有云端结果做基线，评测本地一次成型输出并做提示词模板排名 |
 
 **退出码**（CLI 与 GUI 共用）：
 
@@ -690,13 +693,83 @@ B 站规格：H.264 High / yuv420p / 30 fps / 10 Mbps / GOP 2s / MP4 `faststart`
 - **音画同步**：每段音轨都会补齐/裁剪到该段画面时长，再按顺序拼接
 - 之后若重跑了翻译，重跑一次 `story-tr video` 即可更新视频（默认跳过已有文件，需更新时加 `--overwrite`）
 
+### 本地 RWKV（一次成型）
+
+用本机离线运行的 RWKV「翻译 20 次」微调模型，**一份结果只生成 1 次**（替代云端 21~23 次请求），适合离线、无每日配额、可无人值守的批量翻译；云端链路仍保留为质量基线。
+
+**适用模型与放置**
+
+- 适用模型：`translate-20times-3B.pth`（RWKV-5 World 3B v2 的 LoRA 微调权重，约 **6.1 GB**）。
+- 放到 **RWKV-Runner 的 `models/` 目录**，**不要放本仓库**：该文件远超 GitHub 单文件限制；本仓库根目录的 `model/` 已被 `.gitignore` 忽略（见「[目录结构](#目录结构)」）。
+
+**启动**
+
+1. 用 RWKV-Runner 加载 `translate-20times-3B.pth` 并启动服务（默认 `http://127.0.0.1:8000`）。
+2. 用 `story-tr doctor --probe` 检查服务状态与已加载的模型名（不加 `--probe` 时只做离线检查、不联网）。
+
+```bash
+story-tr doctor --probe
+```
+
+**命令**
+
+```bash
+# 单个角色（默认处理其全部含内容故事）
+story-tr translate 10000021 --mode rwkv20
+
+# 全部角色（离线批量；rwkv20 默认不生成语音）
+story-tr translate --all-characters --mode rwkv20
+
+# 单条文本「翻译 20 次」
+story-tr chain "测试文本" --mode rwkv20
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `--mode rwkv20` | 一次成型模式：每份结果只发 1 次本地生成 |
+| `--provider rwkv` | 本地后端，**仅与 `--mode rwkv20` 搭配**（`rwkv20` 下自动选用） |
+| `--rwkv-url` | 本地服务地址（默认取 `RWKV_API_URL`，即 `http://127.0.0.1:8000`） |
+| `--rwkv-template` | 提示词模板（占位符 `{text}` / `{src}` / `{tgt}`；`\n` 按换行解析） |
+| `--rwkv-max-tokens` | 单次生成上限（默认 `1024`） |
+| `--rwkv-temperature` | 采样温度（默认 `1.0`） |
+| `--rwkv-top-p` | 采样 `top_p`（默认 `0.3`） |
+| `--rwkv-timeout` | 单次请求超时秒数（默认 `300`） |
+| `--rwkv-chunk-chars` | 长文本分块阈值（默认 `1200` 字符） |
+| `--rwkv-retries` | 业务失败重试次数（默认 `2`） |
+| `--tts` | 生成语音；**`rwkv20` 默认不生成**（gTTS 仍需联网），显式加 `--tts` 才生成 mp3 |
+
+**行为说明**
+
+- 每份结果只发 **1 次本地生成**（替代云端「翻译 20 次」的 21~23 次请求）。
+- 续跑与签名：改变本地 URL / 模板 / 采样参数后需加 `--reset`（签名不一致时退出码 `3`）。
+- 长文本按 `--rwkv-chunk-chars` 分块，优先在句末标点切分，再按原顺序拼接。
+- 输出会清洗模板与 `User:` / `Bot:` / `Assistant:` 回声、首尾空白与包裹引号。
+- 模型未加载（服务返回 `model not loaded`）退出码 `4`；本地服务不可达退出码 `5`。
+- 结果结构与云端一致（`languages=["rwkv20"]`、`steps` 仅 1 项），产物仍在 `{id}/result/{story}/`。
+
+**提示词校准**
+
+该模型没有附带模型卡片，默认模板 `User: {text}\n\nBot:` 只是候选值。可用已有云端结果做基线，评测本地输出并给出模板排名：
+
+```bash
+story-tr rwkv-eval --limit 20 --templates builtin
+```
+
+报告写入 `logs/rwkv_eval_<时间戳>.json` 与 `.md`（不写 `result/`、不改状态文件）；按报告结果调整 `RWKV_PROMPT_TEMPLATE` 或 `--rwkv-template`。
+
+**许可**
+
+- RWKV-Runner：**MIT**（外部可选服务，不随本项目分发；本项目只通过 OpenAI 兼容 HTTP 接口调用，不复制其代码）。
+- 上游 RWKV-5 World 3B v2 权重：**Apache-2.0**。
+- 该 LoRA 微调权重（`translate-20times-3B.pth`）的作者与许可**未随文件提供、未知**，因此**只能本地使用，不得随仓库分发**。
+
 ## MCP Server
 
 把项目接入支持 **MCP**（Model Context Protocol）的客户端（Trae / Claude Desktop / Cursor 等），让模型直接查询角色、故事与翻译结果，并可**触发**翻译/抓取等长任务。
 
 - 命令：`story-tr-mcp`（等价 `python -m story_tr.mcp`），**stdio** 传输
 - 依赖：可选依赖 `pip install -e ".[mcp]"`（官方 `mcp` SDK，**需 Python ≥3.10**）
-- 能力：**13 个 Tool**（5 只读 + 2 同步 + 6 长任务 job）+ **5 个 Resource**（角色 / 故事原文 / 翻译结果 / 全局状态）
+- 能力：**14 个 Tool**（6 只读 + 2 同步 + 6 长任务 job）+ **5 个 Resource**（角色 / 故事原文 / 翻译结果 / 全局状态）
 - 工作目录同 CLI：`$STORY_TR_HOME` → 向上查找 `data/character.json` → 当前目录
 
 **完整说明见 → [docs/mcp.md](docs/mcp.md)**（客户端配置、分发安装、Tool / Resource 清单）
@@ -795,6 +868,8 @@ story-tr-gui                 # 等价：python -m story_tr.gui
 
 > 开发与测试：`pip install -e ".[dev,mcp,gui,video]"` → `ruff check .` + `pytest`。测试按依赖**自动分层跳过** —— 未装 `mcp` / `PySide6` / `Pillow` 或没有 `ffmpeg` 时相关用例自动跳过，因此基础测试在任意环境都能跑。
 > CI（`.github/workflows/ci.yml`）：`test` job 在 Python 3.9 / 3.11 / 3.13 / 3.14 上装 `[dev,mcp]` 跑 ruff + pytest；`gui` job 只在 **3.13** 上装 `[dev,gui]`，并以 `QT_QPA_PLATFORM=offscreen` 离屏跑 GUI 测试（PySide6 约 200MB，不铺满矩阵）；`video` job 装 `[dev,video]` + `ffmpeg` + `fonts-noto-cjk` 跑视频测试；`build` job 验证 `python -m build` 与 `twine check`。
+
+> **外部可选服务：RWKV-Runner**（**MIT**）—— 提供本地 RWKV 推理服务，**不随本项目分发**，也不是 Python 依赖；本项目只通过其 OpenAI 兼容 HTTP 接口（`POST /v1/completions`、`GET /status`、`GET /v1/models`）调用，不复制其代码。模型权重许可：上游 RWKV-5 World 3B v2 为 **Apache-2.0**；`translate-20times-3B.pth`（LoRA 微调）作者与许可未知，**仅可本地使用、不得再分发**。详见「[本地 RWKV（一次成型）](#本地-rwkv一次成型)」。
 
 ## 版本与变更
 

@@ -9,9 +9,10 @@ from __future__ import annotations
 import argparse
 
 from .. import chain as tc
-from .. import cli, paths
+from .. import cli, paths, rwkv
 
 DEFAULT_MIN_INTERVAL = tc.GOOGLE_MIN_INTERVAL
+DEFAULT_RWKV_URL = rwkv.DEFAULT_URL
 
 
 def _verbosity(argv: list, verbose: bool, quiet: bool) -> list:
@@ -26,7 +27,7 @@ def translate_argv(char_ids="", stories="", all_characters=False, mode="fixed", 
                    languages="", steps=20, provider="", workers=1, full_only=False,
                    segments_only=False, overwrite=False, no_tts=False, no_batch=False,
                    min_interval=DEFAULT_MIN_INTERVAL, balance=False, reset=False,
-                   verbose=False, quiet=False) -> list:
+                   verbose=False, quiet=False, rwkv_url="", rwkv_template="") -> list:
     """组装 `story-tr translate` 的 argv。"""
     argv = ["translate"]
     if char_ids.strip():
@@ -36,14 +37,21 @@ def translate_argv(char_ids="", stories="", all_characters=False, mode="fixed", 
     if stories.strip():
         argv += ["--stories", stories.strip()]
     argv += ["--mode", mode]
-    if mode == "fixed" and chain:
-        argv += ["--chain", chain]
-    if mode == "custom" and languages.strip():
-        argv += ["--languages", languages.strip()]
-    if mode == "random":
-        argv += ["--steps", str(steps)]
+    if mode == "rwkv20":
+        provider = provider or "rwkv"
+    else:
+        if mode == "fixed" and chain:
+            argv += ["--chain", chain]
+        if mode == "custom" and languages.strip():
+            argv += ["--languages", languages.strip()]
+        if mode == "random":
+            argv += ["--steps", str(steps)]
     if provider:
         argv += ["--provider", provider]
+    if rwkv_url.strip():
+        argv += ["--rwkv-url", rwkv_url.strip()]
+    if rwkv_template.strip():
+        argv += ["--rwkv-template", rwkv_template]
     argv += ["--workers", str(workers), "--min-interval", str(min_interval)]
     if full_only:
         argv.append("--full-only")

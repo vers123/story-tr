@@ -53,6 +53,7 @@ from tenacity import (
 from tqdm import tqdm
 
 from . import paths, report, statefile
+from . import rwkv as local_rwkv
 from .exitcodes import ExitCode
 
 ROOT = paths.home()
@@ -143,6 +144,10 @@ class UnsupportedLanguage(ChainError):
 
 class Paused(ChainError):
     """重试耗尽，暂停并出报告。"""
+
+
+class ModelNotLoaded(Paused):
+    """本地模型未加载（服务可达）；区别于普通业务失败，批量应立即中止。"""
 
 
 class Cancelled(ChainError):
@@ -260,6 +265,9 @@ def provider_available(provider: str, cfg: dict):
     if provider == "baidu":
         if not (cfg.get("baidu_appid") and cfg.get("baidu_appkey")):
             return False, "缺少 BAIDU_APPID / BAIDU_APPKEY"
+        return True, ""
+    if provider == "rwkv":
+        # 本地服务是否可达由实际请求判定（不在选后端阶段额外探测）
         return True, ""
     return False, "未知后端"
 
@@ -585,6 +593,10 @@ def _split_text(text: str, limit: int = MAX_CHARS_PER_REQUEST):
 
 def translate_once(provider: str, text: str, src_code: str, tgt_code: str, cfg: dict) -> str:
     """翻译一段文本；超长时按块翻译后拼接（免费端点对超长文本会报 400）。"""
+    if provider == "rwkv":
+        # 本地后端自带分块（chunk_chars）；此处再切块会把「一次成型」拆成多次生成，
+        # 也会让每份文本对应的本地元数据对不上。
+        return _translate_once_raw(provider, text, src_code, tgt_code, cfg)
     chunks = _split_text(text)
     if len(chunks) <= 1:
         return _translate_once_raw(provider, text, src_code, tgt_code, cfg)
@@ -639,7 +651,67 @@ def translate_many(provider: str, texts, src_code: str, tgt_code: str, cfg: dict
     return ["".join(got.get(i, [])) for i in range(len(texts))]
 
 
+# 本地后端元数据（线程内累计）：供 run_chain_many / chain.main 写进 step 与结果
+_local_meta = threading.local()
+
+
+def _reset_local_meta():
+    """清空当前线程的本地生成元数据（每次步骤开始前调用）。"""
+    _local_meta.metas = []
+
+
+def local_metas():
+    """当前线程自上次重置以来逐条文本的本地生成元数据（按调用顺序）。"""
+    return list(getattr(_local_meta, "metas", []))
+
+
+def local_meta():
+    """当前线程自上次重置以来累计的本地生成元数据（非本地后端时为 None）。"""
+    return merge_local_meta(local_metas())
+
+
+def _merge_local_meta(cfg_local, res):
+    """把一次本地生成的结果追加到当前线程的元数据（每条文本一条）。"""
+    sig = local_rwkv.signature(cfg_local)
+    _local_meta.metas = local_metas() + [{
+        "url": sig["url"], "model": sig["model"],
+        "template_sha1": sig["template_sha1"],
+        "chunks": int(res.get("chunks") or 0),
+        "prompt_tokens": int(res.get("prompt_tokens") or 0),
+        "completion_tokens": int(res.get("completion_tokens") or 0)}]
+
+
+def merge_local_meta(metas):
+    """把多条 step 的 `rwkv` 元数据合成一份（静态字段取第一条，三个计数求和）。"""
+    items = [m for m in (metas or ()) if isinstance(m, dict)]
+    if not items:
+        return None
+    merged = {"url": items[0].get("url"), "model": items[0].get("model"),
+              "template_sha1": items[0].get("template_sha1"),
+              "chunks": 0, "prompt_tokens": 0, "completion_tokens": 0}
+    for item in items:
+        merged["chunks"] += int(item.get("chunks") or 0)
+        merged["prompt_tokens"] += int(item.get("prompt_tokens") or 0)
+        merged["completion_tokens"] += int(item.get("completion_tokens") or 0)
+    return merged
+
+
 def _translate_once_raw(provider: str, text: str, src_code: str, tgt_code: str, cfg: dict) -> str:
+    if provider == "rwkv":
+        cfg_local = (cfg or {}).get("rwkv") or local_rwkv.from_env()
+        try:
+            res = local_rwkv.translate(text, cfg_local)
+        except local_rwkv.RwkvUnavailable as exc:
+            raise ConnectionIssue(str(exc))
+        except local_rwkv.RwkvModelOffline as exc:
+            raise ModelNotLoaded(str(exc))
+        except local_rwkv.RwkvBadOutput as exc:
+            raise BusinessError(str(exc))
+        except local_rwkv.RwkvError as exc:
+            raise BusinessError(str(exc))
+        _merge_local_meta(cfg_local, res)
+        return res["text"]
+
     def _run(fn):
         try:
             out = fn()
@@ -701,7 +773,18 @@ def _step_loop(provider, call, cfg, log):
     - 被限流（429）：退避等待后重试**同一后端**（不切后端），耗尽则抛 RateLimited
     - 业务类错误（内容/参数/空结果）：重试 MAX_ATTEMPTS 次后抛 Paused
     - 连接类错误（超时/DNS/SSL/拒连）：抛 ConnectionIssue，由调用方切后端
+    - 本地后端（rwkv）：不做云端式长退避 —— 连接失败立即抛，业务错误单次转 Paused
+      （`rwkv.translate` 已按 `RWKV_RETRIES` 重试过空输出）
     """
+    if provider == "rwkv":
+        try:
+            return call()
+        except BusinessError as exc:
+            raise Paused("本地 RWKV 业务失败（已按 RWKV_RETRIES 重试）：%s" % exc)
+        except ChainError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            _classify_and_raise(exc)
 
     def _retryer(label, exc_type, wait, stop, max_times):
         """构造 tenacity 重试器（退避/次数/日志交给 tenacity）。"""
@@ -764,6 +847,7 @@ def _translate_with_providers(providers, cfg, log, call):
 
 def translate_step(text: str, src_code: str, tgt_code: str, providers, cfg, log):
     """返回 (provider, 结果文本)。规则见 `_step_loop`。"""
+    _reset_local_meta()
     provider, out = _translate_with_providers(
         providers, cfg, log, lambda p: translate_once(p, text, src_code, tgt_code, cfg))
     log.log(report.STEP, "  [%s] %s → %s：%s", provider, lang_label(src_code),
@@ -780,6 +864,7 @@ def translate_step_many(texts, src_code: str, tgt_code: str, providers, cfg, log
     if len(texts) == 1:
         provider, out = translate_step(texts[0], src_code, tgt_code, providers, cfg, log)
         return provider, [out]
+    _reset_local_meta()
     provider, outs = _translate_with_providers(
         providers, cfg, log, lambda p: translate_many(p, texts, src_code, tgt_code, cfg))
     log.log(report.STEP, "  [%s] %s → %s：%d 条（批量）", provider, lang_label(src_code),
@@ -790,7 +875,29 @@ def translate_step_many(texts, src_code: str, tgt_code: str, providers, cfg, log
 # --------------------------------------------------------------------------- #
 # 路线与任务
 # --------------------------------------------------------------------------- #
+def tts_enabled(args) -> bool:
+    """rwkv20 默认不生成语音；其它模式默认生成（--no-tts 关闭）。"""
+    if getattr(args, "mode", None) == "rwkv20":
+        return bool(getattr(args, "tts", False))
+    return not bool(getattr(args, "no_tts", False))
+
+
+def resolve_providers(args):
+    """返回 (providers, 错误文案)。rwkv20 只允许本地后端；rwkv 只能配 rwkv20。"""
+    mode = getattr(args, "mode", None)
+    provider = getattr(args, "provider", None)
+    if mode == "rwkv20":
+        if provider and provider != "rwkv":
+            return [], "--mode rwkv20 只支持本地后端，请去掉 --provider 或使用 --provider rwkv"
+        return ["rwkv"], ""
+    if provider == "rwkv":
+        return [], "--provider rwkv 仅能与 --mode rwkv20 搭配（本地模型只做一次成型）"
+    return ([provider] if provider else ["google", "bing", "baidu"]), ""
+
+
 def resolve_languages(args) -> tuple[list[str], str]:
+    if getattr(args, "mode", None) == "rwkv20":
+        return ["rwkv20"], "rwkv20"
     if args.mode == "fixed":
         return list(CHAINS[args.chain]), args.chain
     if args.mode == "random":
@@ -806,6 +913,9 @@ def resolve_languages(args) -> tuple[list[str], str]:
 
 
 def build_tasks(detected: str, languages: list[str]):
+    if list(languages) == ["rwkv20"]:
+        return [{"kind": "rwkv20", "index": 0, "lang": TARGET_ZH,
+                 "src": TARGET_ZH, "tgt": TARGET_ZH}]
     tasks = []
     if detected != "en":
         tasks.append({"kind": "to_en", "lang": "en", "src": detected, "tgt": "en"})
@@ -817,8 +927,8 @@ def build_tasks(detected: str, languages: list[str]):
     return tasks
 
 
-def signature(args, text, detected, languages, providers):
-    return {
+def signature(args, text, detected, languages, providers, cfg=None):
+    sig = {
         "text": text,
         "detected": detected,
         "mode": args.mode,
@@ -826,6 +936,10 @@ def signature(args, text, detected, languages, providers):
         "languages": languages,
         "providers": list(providers),
     }
+    if "rwkv" in providers:
+        cfg_local = (cfg or {}).get("rwkv") or local_rwkv.from_args(args)
+        sig["rwkv"] = local_rwkv.signature(cfg_local)
+    return sig
 
 
 # --------------------------------------------------------------------------- #
@@ -890,24 +1004,47 @@ def setup_logging(no_file_log: bool, console_level: int = logging.INFO):
 def add_common_args(p, default_mode="random"):
     """注册两个脚本共用的「翻译链 / 后端与速率 / 输出」参数（统一 CLI 设计）。"""
     g = p.add_argument_group("翻译链")
-    g.add_argument("--mode", choices=["fixed", "random", "custom"], default=default_mode,
-                   help="路线模式（默认 %s）" % default_mode)
+    g.add_argument("--mode", choices=["fixed", "random", "custom", "rwkv20"], default=default_mode,
+                   help="路线模式（默认 %s；rwkv20 = 本地一次成型）" % default_mode)
     g.add_argument("--chain", choices=list(CHAINS), default="asia",
                    help="fixed 模式使用哪套链（默认 asia）")
     g.add_argument("--languages", default="", help="custom 模式的语言序列，逗号分隔")
     g.add_argument("--steps", type=int, default=20, help="random 模式抽取语言数（默认 20）")
 
     g = p.add_argument_group("后端与速率")
-    g.add_argument("--provider", choices=["google", "bing", "baidu"], default=None,
-                   help="固定单个后端；不指定则 google → bing → baidu 自动回退")
+    g.add_argument("--provider", choices=["google", "bing", "baidu", "rwkv"], default=None,
+                   help="固定单个后端；不指定则 google → bing → baidu 自动回退；"
+                        "rwkv（本地）仅配合 --mode rwkv20")
     g.add_argument("--proxy", default="", help="代理地址（覆盖 .env 的 HTTPS_PROXY/HTTP_PROXY）")
     g.add_argument("--min-interval", type=float, default=GOOGLE_MIN_INTERVAL,
                    help="请求最小间隔秒数，避免触发限流（默认 %.1f，0 关闭）" % GOOGLE_MIN_INTERVAL)
     g.add_argument("--balance", action="store_true",
                    help="多后端轮转分摊请求（默认关闭；开启可分摊配额，但备用通道更慢/更易限流）")
 
+    g = p.add_argument_group("本地 RWKV（rwkv20）")
+    g.add_argument("--rwkv-url", default="",
+                   help="本地服务地址（默认读 .env 的 RWKV_API_URL，再默认 %s）"
+                        % local_rwkv.DEFAULT_URL)
+    g.add_argument("--rwkv-template", default="",
+                   help="提示词模板，占位符 {text}/{src}/{tgt}（默认读 .env 的 RWKV_PROMPT_TEMPLATE）")
+    g.add_argument("--rwkv-max-tokens", type=int, default=None,
+                   help="单块生成上限（默认读 .env 的 RWKV_MAX_TOKENS）")
+    g.add_argument("--rwkv-temperature", type=float, default=None,
+                   help="采样温度（默认读 .env 的 RWKV_TEMPERATURE）")
+    g.add_argument("--rwkv-top-p", type=float, default=None,
+                   help="采样 top_p（默认读 .env 的 RWKV_TOP_P）")
+    g.add_argument("--rwkv-timeout", type=float, default=None,
+                   help="单块请求超时秒数（默认读 .env 的 RWKV_TIMEOUT）")
+    g.add_argument("--rwkv-chunk-chars", type=int, default=None,
+                   help="长文本分块阈值（默认读 .env 的 RWKV_CHUNK_CHARS）")
+    g.add_argument("--rwkv-retries", type=int, default=None,
+                   help="输出异常重试次数（默认读 .env 的 RWKV_RETRIES）")
+
     g = p.add_argument_group("输出")
-    g.add_argument("--no-tts", action="store_true", help="不生成最终译文的语音")
+    gsel = g.add_mutually_exclusive_group()
+    gsel.add_argument("--tts", dest="tts", action="store_true", default=None,
+                      help="生成语音（rwkv20 模式默认不生成，需显式开启）")
+    gsel.add_argument("--no-tts", dest="no_tts", action="store_true", help="不生成最终译文的语音")
     g.add_argument("--no-file-log", action="store_true", help="不写文件日志")
     report.add_verbosity_args(g)
 
@@ -937,18 +1074,22 @@ def build_cfg(args):
         "bing_region": os.getenv("BING_REGION", ""),
         "baidu_appid": os.getenv("BAIDU_APPID", ""),
         "baidu_appkey": os.getenv("BAIDU_APPKEY", ""),
+        "rwkv": local_rwkv.from_args(args),
     }
 
 
 def main(args) -> int:
     log, logfile = setup_logging(args.no_file_log, report.console_level(args, show_steps=True))
     cfg = build_cfg(args)
+    providers, err = resolve_providers(args)
+    if err:
+        print(err)
+        return ExitCode.USAGE
+    args.no_tts = not tts_enabled(args)
 
     text = args.text
     detected = detect_language(text)
     languages, chain_label = resolve_languages(args)
-
-    providers = [args.provider] if args.provider else ["google", "bing", "baidu"]
 
     print("原文：%s" % text)
     print("检出语言：%s" % lang_label(detected))
@@ -958,11 +1099,13 @@ def main(args) -> int:
     print("目标语言：%s" % lang_label(TARGET_ZH))
 
     if args.dry_run:
+        if args.mode == "rwkv20":
+            print("本地一次成型：每份 1 次本地生成（不访问云端）")
         print("--dry-run：仅展示路线，未执行翻译。")
         return ExitCode.OK
 
     tasks = build_tasks(detected, languages)
-    sig = signature(args, text, detected, languages, providers)
+    sig = signature(args, text, detected, languages, providers, cfg)
 
     # ---- 状态 / 续跑 ----
     steps = []

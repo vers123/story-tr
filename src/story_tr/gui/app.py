@@ -55,8 +55,8 @@ from ..mcp import tools as mtools
 from . import argv as gargv
 from .runner import StreamRelay, TaskRunner, capture_streams
 
-PROVIDERS = ["（自动 google→bing→baidu）", "google", "bing", "baidu"]
-MODES = ["fixed", "random", "custom"]
+PROVIDERS = ["（自动 google→bing→baidu）", "google", "bing", "baidu", "rwkv（本地）"]
+MODES = ["fixed", "random", "custom", "rwkv20"]
 PART_LABELS = [("both", "两者都要（默认）"),
                ("full", "只出全文（--full-only）"),
                ("segments", "只出段落（--segments-only）")]
@@ -254,11 +254,24 @@ class TranslateTab(_TaskTab):
         rate_form.addRow("并发线程", self.workers)
         rate_form.addRow("最小间隔", self.min_interval)
 
+        # ---- 本地模型（rwkv20） ----
+        self.rwkv_url = QLineEdit()
+        self.rwkv_url.setText(gargv.DEFAULT_RWKV_URL)
+        self.rwkv_url.setToolTip("RWKV-Runner 的 OpenAI 兼容接口地址（默认 127.0.0.1:8000）")
+        self.rwkv_template = QLineEdit()
+        self.rwkv_template.setPlaceholderText("默认 User: {text}\n\nBot:（可留空）")
+        self.rwkv_template.setToolTip("本地模型提示词模板，支持 {text}/{src}/{tgt}；"
+                                      "先用 story-tr rwkv-eval 校准")
+        rwkv_form = QFormLayout()
+        rwkv_form.addRow("服务地址", self.rwkv_url)
+        rwkv_form.addRow("提示词模板", self.rwkv_template)
+
         box = QGroupBox("翻译参数")
         b = QVBoxLayout(box)
         b.addWidget(self._group("基本", base_form))
         b.addWidget(self._group("输出内容", out_box))
         b.addWidget(self._group("速率与后端", rate_form))
+        b.addWidget(self._group("本地模型（rwkv20）", rwkv_form))
         b.addWidget(self.bar)
         b.addWidget(self.status)
         lay = self.body_layout
@@ -293,10 +306,18 @@ class TranslateTab(_TaskTab):
         self.chain.setEnabled(mode == "fixed")
         self.custom_langs.setEnabled(mode == "custom")
         self.steps.setEnabled(mode == "random")
+        self.provider.setEnabled(mode != "rwkv20")
+        if mode == "rwkv20":
+            self.provider.setCurrentText("rwkv（本地）")
 
     # ------------------------------------------------------------------ 任务
     def build_job(self, reset=False):
-        provider = "" if self.provider.currentIndex() == 0 else self.provider.currentText()
+        if self.current_mode() == "rwkv20":
+            provider = "rwkv"
+        elif self.provider.currentIndex() == 0:
+            provider = ""
+        else:
+            provider = self.provider.currentText().replace("（本地）", "")
         parts = self.current_parts()
         argv_list = gargv.translate_argv(
             char_ids=self.char_ids.text(), stories=self.story_filter.text(),
@@ -306,6 +327,7 @@ class TranslateTab(_TaskTab):
             workers=self.workers.value(), min_interval=float(self.min_interval.value()),
             full_only=(parts == "full"), segments_only=(parts == "segments"),
             overwrite=self.overwrite.isChecked(), no_tts=self.no_tts.isChecked(),
+            rwkv_url=self.rwkv_url.text().strip(), rwkv_template=self.rwkv_template.text(),
             reset=reset, verbose=self.verbose.isChecked())
         return stories.main, argv_list, True
 
@@ -324,6 +346,8 @@ class TranslateTab(_TaskTab):
         settings.setValue("translate/languages", self.custom_langs.text())
         settings.setValue("translate/steps", self.steps.value())
         settings.setValue("translate/provider", self.provider.currentIndex())
+        settings.setValue("translate/rwkv_url", self.rwkv_url.text())
+        settings.setValue("translate/rwkv_template", self.rwkv_template.text())
         settings.setValue("translate/workers", self.workers.value())
         settings.setValue("translate/min_interval", float(self.min_interval.value()))
         settings.setValue("translate/overwrite", self.overwrite.isChecked())
@@ -343,6 +367,9 @@ class TranslateTab(_TaskTab):
         self.custom_langs.setText(str(settings.value("translate/languages", "")))
         self.steps.setValue(int(settings.value("translate/steps", 20)))
         self.provider.setCurrentIndex(int(settings.value("translate/provider", 0)))
+        self.rwkv_url.setText(str(settings.value("translate/rwkv_url",
+                                                 gargv.DEFAULT_RWKV_URL)))
+        self.rwkv_template.setText(str(settings.value("translate/rwkv_template", "")))
         self.workers.setValue(int(settings.value("translate/workers", 1)))
         self.min_interval.setValue(float(settings.value(
             "translate/min_interval", gargv.DEFAULT_MIN_INTERVAL)))

@@ -44,6 +44,36 @@ def test_translate_custom_adds_languages():
     assert a[a.index("--languages") + 1] == "en,ja"
 
 
+def test_translate_rwkv20_drops_chain_and_uses_local_provider():
+    """rwkv20 一次成型：不应再带链/自定义语言/随机步数，后端固定为本地。"""
+    a = gargv.translate_argv(char_ids="1", mode="rwkv20", chain="asia", steps=20,
+                             languages="en,ja")
+    assert "--chain" not in a
+    assert "--languages" not in a
+    assert "--steps" not in a
+    assert a[a.index("--provider") + 1] == "rwkv"
+    assert a[a.index("--mode") + 1] == "rwkv20"
+
+
+def test_translate_rwkv20_passes_url_and_template():
+    template = "User: {text}\n\nBot:"
+    a = gargv.translate_argv(char_ids="1", mode="rwkv20",
+                             rwkv_url="http://127.0.0.1:9000", rwkv_template=template)
+    assert a[a.index("--rwkv-url") + 1] == "http://127.0.0.1:9000"
+    assert a[a.index("--rwkv-template") + 1] == template
+    ns = gargv.parse(a)
+    assert ns.rwkv_url == "http://127.0.0.1:9000"
+    assert ns.rwkv_template == template
+    assert "\n" in ns.rwkv_template  # 真实换行原样传给 argparse
+
+
+def test_translate_default_unchanged():
+    """不传本地参数时不新增任何 rwkv 选项（默认行为保持不变）。"""
+    a = gargv.translate_argv(char_ids="1")
+    assert "--rwkv-url" not in a
+    assert "--rwkv-template" not in a
+
+
 def test_quiet_beats_verbose():
     a = gargv.translate_argv(char_ids="1", verbose=True, quiet=True)
     assert "-q" in a and "--verbose" not in a

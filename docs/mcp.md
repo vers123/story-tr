@@ -97,13 +97,31 @@ pip install --no-index --find-links=bundle "story-tr[mcp]"           # 目标机
 | `get_result_summary(char_id, story)` | 翻译结果概要（标题 / 全文 / 各段的源文与最终译文） |
 | `read_result_item(char_id, story, key)` | 单条明细：`key` 取 `full` / `title` / `seg_NN` |
 | `status()` | 全局状态：角色/故事覆盖、结果与语音数量、磁盘、批量进度 |
+| `rwkv_status(probe=false)` | 本地 RWKV（`rwkv20`）配置与服务状态；**默认不联网** |
 
 ## Tools（同步：联网 / 写盘）
 
 | Tool | 说明 |
 | --- | --- |
-| `chain(text, …)` | 单条文本跑「来回翻译 N 次」链路（联网，**同步**返回逐步与最终译文） |
+| `chain(text, …)` | 单条文本跑「来回翻译 N 次」链路（联网，**同步**返回逐步与最终译文）；`mode="rwkv20"` 时走本地一次成型 |
 | `clean(char_ids, …)` | 清理 `result/`；**默认只预览**（`dry_run=true`），需 `dry_run=false` **且** `confirm=true` 才真删 |
+
+## 参数：`mode` / `provider` / 本地模型
+
+`chain` 与 `translate_start` 共有：
+
+| 参数 | 取值 / 说明 |
+| --- | --- |
+| `mode` | `fixed`（默认，按 `chain` 链） / `random` / `custom`（需 `languages`） / `rwkv20`（本地一次成型，1 份文本 = 1 次本地生成） |
+| `provider` | `google` / `bing` / `baidu`；**`rwkv` 只能与 `mode="rwkv20"` 搭配**，反之 `mode="rwkv20"` 只接受 `rwkv`（缺省即 `rwkv`，忽略 `chain`） |
+| `rwkv_url` | 本地服务地址，缺省读 `.env` 的 `RWKV_API_URL`，再缺省 `http://127.0.0.1:8000` |
+| `rwkv_template` | 提示词模板（占位符 `{text}` / `{src}` / `{tgt}`），缺省读 `RWKV_PROMPT_TEMPLATE` |
+
+> **本地模式前提**：需先启动 [RWKV-Runner](https://github.com/josStorer/RWKV-Runner)（默认监听 `127.0.0.1:8000`）并在其中加载 `translate-20times-3B.pth`，**无需任何密钥**。
+> 该 LoRA 微调权重未随项目分发、许可未知，**仅限本地使用、不得再分发**；`rwkv20` 默认不生成语音（gTTS 需联网）。
+>
+> `rwkv_status` 返回 `{url, configured, template_present, reachable, status, model, error}`：
+> `probe=false`（默认）只读环境配置、**不发网络请求**（后四项为 `null`）；`probe=true` 才访问 `/status` 与 `/v1/models`。
 
 ## Tools（长任务：start / status 轮询）
 
@@ -129,7 +147,7 @@ pip install --no-index --find-links=bundle "story-tr[mcp]"           # 目标机
 > **长任务说明**：`translate` / `fetch` / `video` 由 MCP 以**子进程**调用既有 CLI（`python -m story_tr …`），
 > 同一时刻**只跑一个写任务**（串行队列），避免多个任务争用 `.translate_stories_state.json`；
 > 子进程输出写入 `logs/mcp_<job_id>.log`（`logs/` 已忽略）；job 表存在**内存**中，服务重启即丢列表，但底层断点仍在（重跑可续）。
-> `translate` 只暴露安全参数（`char_ids` / `stories` / `mode` / `chain` / `workers` / `provider` / `full_only` / `segments_only` / `languages`），
+> `translate` 只暴露安全参数（`char_ids` / `stories` / `mode` / `chain` / `workers` / `provider` / `full_only` / `segments_only` / `languages` / `rwkv_url` / `rwkv_template`），
 > **不含** `--overwrite` / `--reset`。
 >
 > 工具/资源报错会把**原因**透传给客户端（如「未知 job_id：…」「尚无翻译结果：…」），便于模型自我纠正。
