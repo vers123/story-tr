@@ -1,6 +1,9 @@
 """补充 CLI 单测：各命令参数映射、互斥校验、进度回调与退出码。"""
 from __future__ import annotations
 
+import sys
+
+import pytest
 from rich.progress import Progress
 from typer.testing import CliRunner
 
@@ -10,7 +13,7 @@ from story_tr.cli.app import (
     _provider_arg,
     _translate_progress_callback,
 )
-from story_tr.errors import ExitCode
+from story_tr.errors import ExitCode, StoryTrError
 from story_tr.services import chain as chain_svc
 from story_tr.services import clean as clean_svc
 from story_tr.services import doctor as doctor_svc
@@ -174,3 +177,31 @@ def test_translate_progress_callback():
         cb({"event": "char_start", "chars": 2, "tasks": 3, "char_index": 1, "char_id": "a"})
         cb({"event": "progress", "chars": 2, "tasks": 3, "done": 1})
         cb({"event": "char_done", "chars": 2, "tasks": 3, "char_index": 1})
+
+
+def _invoke_entrypoint(monkeypatch, exc, capsys):
+    def boom(**kwargs):
+        raise exc
+
+    monkeypatch.setattr(status_svc, "run", boom)
+    monkeypatch.setattr(sys, "argv", ["story-tr", "status"])
+    original = sys.excepthook
+    try:
+        with pytest.raises(SystemExit) as info:
+            app()
+    finally:
+        sys.excepthook = original
+    return info.value.code, capsys.readouterr().err
+
+
+def test_unexpected_error_is_friendly(monkeypatch, capsys):
+    code, err = _invoke_entrypoint(monkeypatch, RuntimeError("boom"), capsys)
+    assert code == 1
+    assert "意外错误" in err
+    assert "RuntimeError" in err
+
+
+def test_story_tr_error_maps_to_usage(monkeypatch, capsys):
+    code, err = _invoke_entrypoint(monkeypatch, StoryTrError("数据损坏"), capsys)
+    assert code == int(ExitCode.USAGE)
+    assert "错误：数据损坏" in err

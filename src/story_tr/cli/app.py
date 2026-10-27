@@ -27,6 +27,7 @@ from rich.progress import (
 )
 
 from story_tr import __version__
+from story_tr.errors import ExitCode, StoryTrError
 from story_tr.services import chain as chain_svc
 from story_tr.services import clean as clean_svc
 from story_tr.services import doctor as doctor_svc
@@ -36,7 +37,29 @@ from story_tr.services import folders as folders_svc
 from story_tr.services import status as status_svc
 from story_tr.services import translate as translate_svc
 
-app = typer.Typer(
+
+class _StoryTrTyper(typer.Typer):
+    """统一兜底：把未捕获异常转成友好提示，避免向用户抛出 traceback。"""
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return super().__call__(*args, **kwargs)
+        except SystemExit:
+            raise
+        except (typer.Exit, typer.Abort) as exc:
+            raise SystemExit(getattr(exc, "exit_code", 1)) from None
+        except KeyboardInterrupt:
+            raise SystemExit(int(ExitCode.CANCELLED)) from None
+        except StoryTrError as exc:
+            typer.secho(f"错误：{exc}", err=True, fg="red")
+            raise SystemExit(int(ExitCode.USAGE)) from None
+        except Exception as exc:  # noqa: BLE001 - 兜底所有未预期异常
+            typer.secho(f"意外错误（{type(exc).__name__}）：{exc}", err=True, fg="red")
+            typer.secho("可加 -v/--verbose 重新运行以查看详细日志。", err=True)
+            raise SystemExit(1) from None
+
+
+app = _StoryTrTyper(
     name="story-tr",
     help="原神角色故事双语文本抓取与「来回翻译 N 次」链路工具",
     no_args_is_help=True,

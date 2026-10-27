@@ -278,6 +278,34 @@ def test_bing_web_bad_structure(monkeypatch):
         t.translate("hello", "en", "zh-CN")
 
 
+def test_bing_refresh_5xx_connection_failed(monkeypatch):
+    _bing_web(monkeypatch,
+              get=lambda url, **kw: FakeResponse(status=503, text="down"),
+              post=lambda url, **kw: FakeResponse(status=200, text=""))
+    t = bing.BingTranslator(_settings())
+    with pytest.raises(ConnectionFailed):
+        t.translate("hello", "en", "zh-CN")
+
+
+def test_bing_refresh_404_rate_limited(monkeypatch):
+    _bing_web(monkeypatch,
+              get=lambda url, **kw: FakeResponse(status=404, text="missing"),
+              post=lambda url, **kw: FakeResponse(status=200, text=""))
+    t = bing.BingTranslator(_settings())
+    with pytest.raises(RateLimited):
+        t.translate("hello", "en", "zh-CN")
+
+
+def test_bing_web_invalid_json_body(monkeypatch):
+    _bing_web(monkeypatch,
+              get=lambda url, **kw: FakeResponse(status=200, text=_BING_HTML),
+              post=lambda url, **kw: FakeResponse(
+                  status=200, text="{not-json", headers={"Content-Type": "application/json"}))
+    t = bing.BingTranslator(_settings())
+    with pytest.raises(RateLimited):
+        t.translate("hello", "en", "zh-CN")
+
+
 def test_bing_web_401_twice(monkeypatch):
     _bing_web(monkeypatch,
               get=lambda url, **kw: FakeResponse(status=200, text=_BING_HTML),
@@ -352,6 +380,25 @@ def test_baidu_empty_result(monkeypatch):
     t = baidu.BaiduTranslator(_settings(baidu_appid="a", baidu_appkey="k"))
     with pytest.raises(BadOutput):
         t.translate("hello", "en", "zh-CN")
+
+
+def test_baidu_multiline_result_joined(monkeypatch):
+    client = FakeClient(post=lambda url, **kw: FakeResponse(
+        payload={"trans_result": [{"src": "a", "dst": "甲"}, {"src": "b", "dst": "乙"}]}))
+    _install_client(monkeypatch, client)
+    t = baidu.BaiduTranslator(_settings(baidu_appid="a", baidu_appkey="k"))
+    assert t.translate("a\nb", "en", "zh-CN") == "甲\n乙"
+
+
+def test_baidu_long_text_is_chunked(monkeypatch):
+    client = FakeClient(post=lambda url, **kw: FakeResponse(
+        payload={"trans_result": [{"dst": "译文"}]}))
+    _install_client(monkeypatch, client)
+    t = baidu.BaiduTranslator(_settings(baidu_appid="a", baidu_appkey="k"))
+    t.min_interval = 0
+    text = "a" * (baidu.BAIDU_MAX_CHARS + 500)
+    assert t.translate(text, "en", "zh-CN") == "译文译文"
+    assert len(client.post_calls) == 2
 
 
 # --------------------------------------------------------------------------- #

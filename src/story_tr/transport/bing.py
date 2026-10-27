@@ -110,6 +110,12 @@ class BingTranslator(BaseTranslator):
         """在当前 base 上解析 IG / IID / token。"""
         base = self._base or BING_WEB_BASES[0]
         resp = self._get(base + "/translator", timeout=BING_WEB_TIMEOUT)
+        if resp.status_code == 429:
+            raise RateLimited("bing(web) 翻译页 HTTP 429 被限流")
+        if resp.status_code >= 500:
+            raise ConnectionFailed(f"bing(web) 翻译页 HTTP {resp.status_code}")
+        if resp.status_code >= 400:
+            raise RateLimited(f"bing(web) 翻译页 HTTP {resp.status_code}")
         html = resp.text
         ig = re.search(r'IG:"([^"]+)"', html)
         iid = re.search(r'data-iid="([^"]+)"', html)
@@ -150,7 +156,10 @@ class BingTranslator(BaseTranslator):
                 raise ConnectionFailed(f"bing(web) HTTP {resp.status_code}")
             if "json" not in (resp.headers.get("Content-Type") or "").lower():
                 raise RateLimited(f"bing(web) 非 JSON 响应（可能被限流）：{resp.text[:60]!r}")
-            payload = resp.json()
+            try:
+                payload = resp.json()
+            except ValueError:
+                raise BadOutput(f"bing(web) 响应不是合法 JSON：{resp.text[:120]}") from None
             try:
                 out = payload[0]["translations"][0]["text"]
             except (KeyError, IndexError, TypeError):
