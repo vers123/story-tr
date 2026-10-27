@@ -9,6 +9,9 @@
 - **技术栈**：typer/httpx/pydantic/pydantic-settings/rich；Python ≥3.10；移除 deep-translator/gTTS/tqdm/requests。
 - **功能**：核心命令 fetch/folders/translate/chain/clean/status/doctor/eval；`rwkv-eval` 更名 `eval`。
 - **质量**：mypy/ruff/覆盖率 ≥85%（实测 93%+）/CI 收敛为 test+build。
+- **修复**：百度翻译返回多行 `trans_result` 时仅取首条导致译文丢失，改为按原顺序换行拼接；超过单次 6000 字节上限的文本自动分片请求。
+- **修复**：Bing 网页通道未校验翻译页 HTTP 状态，4xx/5xx 会被误判为「模型未加载」；非法 JSON 响应体也会抛裸异常，现统一映射为 `RateLimited` / `ConnectionFailed` / `BadOutput`。
+- **修复**：CLI 增加顶层异常兜底，未预期异常与 `StoryTrError` 均输出友好提示并返回稳定退出码，不再向用户抛 traceback。
 
 ## 0.19.0（2026-10-27）
 
