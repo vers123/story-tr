@@ -40,7 +40,7 @@ out/
 data/
 
 # 本地模型权重（体积大、来源/许可需自行确认，不入库）
-model/
-models/
+/model/
+/models/
 *.pth
 *.gguf

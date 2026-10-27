@@ -2,6 +2,14 @@
 
 版本号遵循 [Semantic Versioning 2.0.0](https://semver.org/lang/zh-CN/)；递增规则与「初始开发阶段（`0.y.z`）」说明见 [README · 版本与变更](README.md#版本与变更)。
 
+## 1.0.0（2026-10-27）
+
+- **破坏性**：整体重写；移除 GUI/MCP/video；不兼容 0.x CLI 参数 / 结果 JSON / 数据目录 / 状态文件 / 包 API，无迁移。
+- **架构**：models/core/transport/services/cli 五层；统一 `Translator` 后端抽象（google/bing/baidu/rwkv）。
+- **技术栈**：typer/httpx/pydantic/pydantic-settings/rich；Python ≥3.10；移除 deep-translator/gTTS/tqdm/requests。
+- **功能**：核心命令 fetch/folders/translate/chain/clean/status/doctor/eval；`rwkv-eval` 更名 `eval`。
+- **质量**：mypy/ruff/覆盖率 ≥85%（实测 93%+）/CI 收敛为 test+build。
+
 ## 0.19.0（2026-10-27）
 
 - **新增**：本地 RWKV 后端 —— 通过 RWKV-Runner 的 OpenAI 兼容接口调用 `translate-20times-3B.pth`；新增 `--mode rwkv20`（一次成型，每份结果 1 次本地生成，替代云端 21~23 次请求）
