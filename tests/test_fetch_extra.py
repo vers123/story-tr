@@ -126,6 +126,26 @@ def test_build_writes_files_and_adds_stories(tmp_path):
     assert info["added_stories"]
 
 
+def test_build_coerces_cv_ids_to_str(tmp_path):
+    home = str(tmp_path)
+    chars = [{"id": "10000021", "name_en": "Amber", "name_zh": "安柏",
+              "path": "data/story/character/10000021", "stories": []}]
+    rec = _story_rec()
+    rec["en"]["avatar"]["fetter"]["cv"] = {"EN": 3354392916, "JP": 1249977488,
+                                           "KR": 986493223, "CHS": "鹿喑&多多poi", "XX": None}
+    fetch_mod._build(home, chars, {"10000021": rec}, only=None, info={})
+    prof = tmp_path / "data" / "story" / "character" / "10000021" / "profile"
+    text = json.loads((prof / "text.json").read_text(encoding="utf-8"))
+    assert text["cv"] == {"EN": "3354392916", "JP": "1249977488",
+                          "KR": "986493223", "CHS": "鹿喑&多多poi"}
+
+
+def test_str_map():
+    assert fetch_mod._str_map(None) == {}
+    assert fetch_mod._str_map(["x"]) == {}
+    assert fetch_mod._str_map({"A": 1, "B": None, "C": "x"}) == {"A": "1", "C": "x"}
+
+
 def test_build_name_diff_and_empty_story(tmp_path):
     home = str(tmp_path)
     chars = [{"id": "10000021", "name_en": "Amber", "name_zh": "安柏",

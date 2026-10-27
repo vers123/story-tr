@@ -247,6 +247,13 @@ def _opt_int(value: Any) -> int | None:
         return None
 
 
+def _str_map(value: Any) -> dict[str, str]:
+    """把接口返回的扁平字典统一转成 `str -> str`（站点部分条目用整数 ID 表示声优）。"""
+    if not isinstance(value, dict):
+        return {}
+    return {str(k): _s(v) for k, v in value.items() if v is not None}
+
+
 def _opt_int_list(value: Any) -> list[int] | None:
     if not isinstance(value, list):
         return None
@@ -372,7 +379,7 @@ def _build(
                 detail_en=_s(fe.get("detail")), detail_zh=_s(fz.get("detail")),
                 constellation_en=_s(fe.get("constellation")), constellation_zh=_s(fz.get("constellation")),
                 native_en=_s(fe.get("native")), native_zh=_s(fz.get("native")),
-                cv=fe.get("cv") or {}, costume=pair_list(ce.get("costume"), cz.get("costume")),
+                cv=_str_map(fe.get("cv")), costume=pair_list(ce.get("costume"), cz.get("costume")),
                 name_card=models.NameCard(name_en=name_card["name_en"], name_zh=name_card["name_zh"],
                                           description_en=name_card["description_en"],
                                           description_zh=name_card["description_zh"]) if name_card else None,
