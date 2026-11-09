@@ -3,6 +3,7 @@
 字段名对应 `.env` 键（pydantic-settings 默认大小写不敏感地把字段名映射为
 大写环境变量名，因此 `google_api_key` 即读取 `GOOGLE_API_KEY`）。
 """
+
 import os
 
 from pydantic import Field, model_validator
@@ -13,8 +14,7 @@ def _unescape(value: str) -> str:
     """把字面的 `\\n` / `\\r` / `\\t` 转成真实控制字符（CLI 与环境变量常见写法）。"""
     if not value:
         return value
-    return (value.replace("\\r\\n", "\n").replace("\\n", "\n")
-            .replace("\\r", "\r").replace("\\t", "\t"))
+    return value.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t")
 
 
 class Settings(BaseSettings):

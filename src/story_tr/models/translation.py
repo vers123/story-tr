@@ -1,4 +1,5 @@
 """翻译结果模型：步骤、本地 RWKV 元数据与最终结果。"""
+
 from pydantic import BaseModel
 
 

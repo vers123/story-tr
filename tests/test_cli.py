@@ -1,5 +1,4 @@
-"""补充 CLI 单测：各命令参数映射、互斥校验、进度回调与退出码。"""
-from __future__ import annotations
+"""cli：命令注册、参数映射、进度回调与退出码。"""
 
 import sys
 
@@ -7,12 +6,9 @@ import pytest
 from rich.progress import Progress
 from typer.testing import CliRunner
 
+from story_tr import __version__
 from story_tr.cli import app
-from story_tr.cli.app import (
-    _fetch_progress_callback,
-    _provider_arg,
-    _translate_progress_callback,
-)
+from story_tr.cli.ui import fetch_progress, provider_arg, translate_progress
 from story_tr.errors import ExitCode, StoryTrError
 from story_tr.services import chain as chain_svc
 from story_tr.services import clean as clean_svc
@@ -25,10 +21,63 @@ from story_tr.services import translate as translate_svc
 
 runner = CliRunner()
 
+SUBCOMMANDS = ("fetch", "folders", "translate", "chain", "clean", "status", "doctor", "eval")
+
+
+def test_help_lists_subcommands():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    out = result.output
+    for name in SUBCOMMANDS:
+        assert name in out
+    assert "video" not in out
+
+
+def test_version():
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert __version__ in result.output
+
+
+@pytest.mark.parametrize("name", SUBCOMMANDS)
+def test_subcommand_help(name):
+    result = runner.invoke(app, [name, "--help"])
+    assert result.exit_code == 0
+
+
+def test_translate_invokes_service(monkeypatch):
+    calls: dict[str, object] = {}
+
+    def fake_run(**kwargs):
+        calls.update(kwargs)
+        return ExitCode.OK
+
+    monkeypatch.setattr(translate_svc, "run", fake_run)
+    result = runner.invoke(app, ["translate", "1", "--mode", "rwkv20", "--provider", "rwkv"])
+    assert result.exit_code == 0
+    assert calls["char_ids"] == ["1"]
+    assert calls["mode"] == "rwkv20"
+    assert calls["provider"] == "rwkv"
+    assert calls["data_dir"] is None
+    assert callable(calls["on_progress"])
+
+
+def test_translate_provider_auto_maps_to_none(monkeypatch):
+    calls: dict[str, object] = {}
+
+    def fake_run(**kwargs):
+        calls.update(kwargs)
+        return ExitCode.OK
+
+    monkeypatch.setattr(translate_svc, "run", fake_run)
+    result = runner.invoke(app, ["translate", "1", "--provider", "auto"])
+    assert result.exit_code == 0
+    assert calls["provider"] is None
+
 
 def test_provider_arg_mapping():
-    assert _provider_arg("auto") is None
-    assert _provider_arg("google") == "google"
+    assert provider_arg("auto") is None
+    assert provider_arg("google") == "google"
 
 
 def test_verbose_quiet_conflict():
@@ -151,10 +200,23 @@ def test_translate_command_full_options(monkeypatch):
         return ExitCode.OK
 
     monkeypatch.setattr(translate_svc, "run", fake_run)
-    result = runner.invoke(app, [
-        "translate", "1-3", "--mode", "fixed", "--provider", "bing", "--workers", "2",
-        "--stories", "vision", "--no-tts", "--reset",
-    ])
+    result = runner.invoke(
+        app,
+        [
+            "translate",
+            "1-3",
+            "--mode",
+            "fixed",
+            "--provider",
+            "bing",
+            "--workers",
+            "2",
+            "--stories",
+            "vision",
+            "--no-tts",
+            "--reset",
+        ],
+    )
     assert result.exit_code == 0
     assert calls["char_ids"] == ["1-3"]
     assert calls["mode"] == "fixed"
@@ -164,16 +226,16 @@ def test_translate_command_full_options(monkeypatch):
     assert calls["reset"] is True
 
 
-def test_fetch_progress_callback():
+def testfetch_progress():
     with Progress() as progress:
-        cb = _fetch_progress_callback(progress)
+        cb = fetch_progress(progress)
         cb({"event": "nope"})  # 非 progress 事件直接忽略
         cb({"event": "progress", "done": 1, "total": 3, "char_id": "10000021"})
 
 
-def test_translate_progress_callback():
+def testtranslate_progress():
     with Progress() as progress:
-        cb = _translate_progress_callback(progress)
+        cb = translate_progress(progress)
         cb({"event": "char_start", "chars": 2, "tasks": 3, "char_index": 1, "char_id": "a"})
         cb({"event": "progress", "chars": 2, "tasks": 3, "done": 1})
         cb({"event": "char_done", "chars": 2, "tasks": 3, "char_index": 1})
@@ -205,3 +267,25 @@ def test_story_tr_error_maps_to_usage(monkeypatch, capsys):
     code, err = _invoke_entrypoint(monkeypatch, StoryTrError("数据损坏"), capsys)
     assert code == int(ExitCode.USAGE)
     assert "错误：数据损坏" in err
+
+
+def test_translate_command_tts_only(monkeypatch):
+    calls = {}
+
+    def fake_run(**kwargs):
+        calls.update(kwargs)
+        return ExitCode.OK
+
+    monkeypatch.setattr(translate_svc, "run", fake_run)
+    result = runner.invoke(app, ["translate", "10000021", "--stories", "vision", "--tts-only"])
+    assert result.exit_code == 0
+    assert calls["tts_only"] is True
+    assert calls["no_tts"] is False
+    assert calls["stories"] == "vision"
+
+
+def test_translate_command_tts_only_conflicts_with_no_tts(monkeypatch):
+    monkeypatch.setattr(translate_svc, "run", lambda **kwargs: ExitCode.OK)
+    result = runner.invoke(app, ["translate", "10000021", "--tts-only", "--no-tts"])
+    assert result.exit_code != 0
+    assert "互斥" in result.output

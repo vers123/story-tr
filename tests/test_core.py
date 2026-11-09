@@ -1,4 +1,5 @@
 """`story_tr.core` 纯逻辑层离线单测。"""
+
 import pytest
 
 from story_tr.core import (
@@ -9,7 +10,9 @@ from story_tr.core import (
     clean_output,
     describe_diff,
     detect_language,
+    lang_label,
     len_ratio,
+    normalize_detected,
     parse_frontmatter,
     repeat4,
     resolve_languages,
@@ -212,7 +215,7 @@ def test_parse_frontmatter_partial_keys():
 
 
 def test_parse_frontmatter_unquoted_value():
-    raw = '---\ntitle: 角色详细\n---\n\n正文\n'
+    raw = "---\ntitle: 角色详细\n---\n\n正文\n"
     fm, _ = parse_frontmatter(raw)
     assert fm == {"title": "角色详细"}
 
@@ -246,15 +249,23 @@ def test_build_signature_mode_specific_fields():
 
 def test_build_signature_rwkv_sub_object():
     sig = build_signature(
-        mode="rwkv20", chain="asia", languages="", steps=20,
-        providers=["rwkv"], rwkv_signature={"url": "http://127.0.0.1:8000"},
+        mode="rwkv20",
+        chain="asia",
+        languages="",
+        steps=20,
+        providers=["rwkv"],
+        rwkv_signature={"url": "http://127.0.0.1:8000"},
     )
     assert sig["rwkv"] == {"url": "http://127.0.0.1:8000"}
 
 
 def test_build_signature_empty_rwkv_omitted():
     sig = build_signature(
-        mode="rwkv20", chain="asia", languages="", steps=20, providers=["rwkv"],
+        mode="rwkv20",
+        chain="asia",
+        languages="",
+        steps=20,
+        providers=["rwkv"],
         rwkv_signature={},
     )
     assert "rwkv" not in sig
@@ -268,10 +279,8 @@ def test_signatures_match():
 
 
 def test_describe_diff_lists_changes():
-    prev = {"mode": "fixed", "chain": "asia", "steps": None, "languages": None,
-            "providers": ["google"]}
-    cur = {"mode": "random", "chain": None, "steps": 5, "languages": None,
-           "providers": ["google"]}
+    prev = {"mode": "fixed", "chain": "asia", "steps": None, "languages": None, "providers": ["google"]}
+    cur = {"mode": "random", "chain": None, "steps": 5, "languages": None, "providers": ["google"]}
     text = describe_diff(prev, cur)
     assert "模式：上次 fixed → 本次 random" in text
     assert "随机步数：上次 — → 本次 5" in text
@@ -319,3 +328,47 @@ def test_score_with_baseline():
 def test_score_without_baseline():
     m = {"zh": 1.0, "len": 1.0, "rep": 0.0}
     assert score(m, False) == pytest.approx(1.0)
+
+
+def test_normalize_detected_maps_langdetect_codes():
+    assert normalize_detected("zh-cn") == "zh-CN"
+    assert normalize_detected("zh-tw") == "zh-TW"
+    assert normalize_detected("he") == "iw"
+    assert normalize_detected("jv") == "jw"
+    assert normalize_detected("fil") == "tl"
+    assert normalize_detected("nb") == "no"
+    assert normalize_detected("ja") == "ja"
+
+
+def test_lang_label_known_and_unknown():
+    assert lang_label("zh-CN") == "简体中文(zh-CN)"
+    assert lang_label("nope") == "?(nope)"
+
+
+def test_detect_language_uses_langdetect_for_latin():
+    # 长句确保 langdetect 能稳定判出英文，覆盖其预热与检出路径
+    assert detect_language("This is a clear English sentence used for language detection.") == "en"
+
+
+def test_resolve_fixed_unknown_chain():
+    with pytest.raises(ValueError):
+        resolve_languages("fixed", chain="nope")
+
+
+def test_parse_frontmatter_single_delimiter():
+    raw = "---\nid: 1\n"
+    fm, body = parse_frontmatter(raw)
+    assert fm is None
+    assert body == raw
+
+
+def test_parse_frontmatter_empty_key_and_value():
+    raw = '---\n: novalue\nkey:\nid: "1"\n---\n正文\n'
+    fm, body = parse_frontmatter(raw)
+    assert fm == {"key": "", "id": "1"}
+    assert body == "\n正文\n"
+
+
+def test_describe_diff_folds_long_provider_list():
+    text = describe_diff({}, {"providers": ["a", "b", "c", "d", "e", "f", "g"]})
+    assert "共 7 项" in text

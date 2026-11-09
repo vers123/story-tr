@@ -1,4 +1,5 @@
 """评测指标（纯函数，无 IO）。"""
+
 import difflib
 import re
 
@@ -30,7 +31,7 @@ def repeat4(text: str) -> float:
     text = text or ""
     if len(text) < 4:
         return 0.0
-    grams = [text[i:i + 4] for i in range(len(text) - 3)]
+    grams = [text[i : i + 4] for i in range(len(text) - 3)]
     total = len(grams)
     if total == 0:
         return 0.0

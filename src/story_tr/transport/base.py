@@ -4,6 +4,7 @@
 线程内复用的 `httpx.Client`、线程安全的最小请求间隔、HTTP 状态 → 错误层级映射，
 以及后端语言代码映射与分块等纯工具函数。
 """
+
 from __future__ import annotations
 
 import threading

@@ -1,4 +1,5 @@
 """按 `data/character.json` 的 stories 同步重命名各角色 `profile/story/` 下文件夹（幂等）。"""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +8,7 @@ import os
 
 from story_tr.errors import ExitCode
 
-from . import _io
+from . import storage
 
 log = logging.getLogger("story_tr.services.folders")
 
@@ -15,8 +16,8 @@ FIXED = ["character_details"] + [f"character_story_{i}" for i in range(1, 6)]
 
 
 def run(data_dir: str | None = None) -> ExitCode:
-    home_ = _io.home(data_dir)
-    char_file = _io.char_index_path(home_)
+    home_ = storage.home(data_dir)
+    char_file = storage.char_index_path(home_)
     if not os.path.exists(char_file):
         log.error("找不到 %s；请先运行 fetch。", char_file)
         return ExitCode.USAGE
@@ -29,11 +30,11 @@ def run(data_dir: str | None = None) -> ExitCode:
     for c in chars:
         sid = c["id"]
         target = list(c.get("stories") or [])
-        sdir = _io.profile_story_dir(home_, sid)
+        sdir = storage.profile_story_dir(home_, sid)
 
         if not os.path.isdir(sdir):
             if target:
-                warnings.append(f"[{sid}] 缺少目录 {_io.rel(home_, sdir)}")
+                warnings.append(f"[{sid}] 缺少目录 {storage.rel(home_, sdir)}")
             continue
 
         current = sorted(n for n in os.listdir(sdir) if os.path.isdir(os.path.join(sdir, n)))

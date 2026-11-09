@@ -2,6 +2,7 @@
 
 本包不依赖任何网络 / 文件 IO / 框架，全部为纯函数，可完全离线单测。
 """
+
 from .lang import (
     BAIDU_NAMES,
     BING_OVERRIDES,

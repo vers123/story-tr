@@ -1,4 +1,5 @@
 """角色数据模型：索引 `CharacterRef`、档案 `CharacterMeta` / `CharacterText`。"""
+
 from pydantic import BaseModel
 
 

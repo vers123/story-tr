@@ -1,4 +1,5 @@
 """models 数据模型的构造 / 序列化 / 校验单测。"""
+
 import pytest
 from pydantic import ValidationError
 

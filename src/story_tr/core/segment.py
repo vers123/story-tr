@@ -3,6 +3,7 @@
 从旧 `chain._split_text`、`rwkv.clean_output` 与 `stories.read_title` /
 `read_paragraphs` 的纯逻辑部分迁移。
 """
+
 import json
 import re
 
@@ -40,7 +41,7 @@ def _strip_quotes(text: str) -> str:
     while len(text) >= 2:
         for left, right in _QUOTE_PAIRS:
             if text.startswith(left) and text.endswith(right):
-                text = text[len(left):len(text) - len(right)].strip()
+                text = text[len(left) : len(text) - len(right)].strip()
                 break
         else:
             return text
@@ -52,7 +53,7 @@ def clean_output(raw: str, prompt: str, source: str) -> str:
     out = (raw or "").strip()
     for prefix in (prompt or "", (prompt or "").rstrip()):
         if prefix and out.startswith(prefix):
-            out = out[len(prefix):]
+            out = out[len(prefix) :]
             break
     out = out.strip()
     while True:

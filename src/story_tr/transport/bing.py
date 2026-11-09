@@ -1,9 +1,11 @@
 """Bing 翻译后端：免 key 网页通道（多域名轮换）+ Azure 官方接口。"""
+
 from __future__ import annotations
 
 import json
 import os
 import re
+import threading
 import time
 
 import httpx
@@ -14,8 +16,10 @@ from story_tr.errors import BadOutput, ConnectionFailed, RateLimited, Translatio
 from .base import BaseTranslator, to_provider_lang
 
 BING_WEB_BASES = ["https://cn.bing.com", "https://www.bing.com"]
-BING_WEB_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-               "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+BING_WEB_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 BING_WEB_TIMEOUT = 40.0
 BING_WEB_TOKEN_TTL = 3000.0  # 秒；页面 token 有效期约 1 小时，提前刷新
 AZURE_URL = "https://api.cognitive.microsofttranslator.com/translate"
@@ -36,6 +40,8 @@ class BingTranslator(BaseTranslator):
         self._key: str | None = None
         self._token: str | None = None
         self._expire = 0.0
+        # 免 key 通道的 token / 域名 / 刷新状态为共享可变状态，多线程下需串行访问。
+        self._token_lock = threading.Lock()
 
     def translate(self, text: str, src: str, tgt: str) -> str:
         if self.settings.bing_api_key:
@@ -56,8 +62,9 @@ class BingTranslator(BaseTranslator):
         }
         if self.settings.bing_region:
             headers["Ocp-Apim-Subscription-Region"] = self.settings.bing_region
-        resp = self._post(AZURE_URL, params=params, headers=headers,
-                          json=[{"Text": text}], timeout=BING_WEB_TIMEOUT)
+        resp = self._post(
+            AZURE_URL, params=params, headers=headers, json=[{"Text": text}], timeout=BING_WEB_TIMEOUT
+        )
         data = self._read_json(resp)
         try:
             out = data[0]["translations"][0]["text"]
@@ -76,6 +83,10 @@ class BingTranslator(BaseTranslator):
         return list(BING_WEB_BASES)
 
     def _web_translate(self, text: str, src_code: str, tgt_code: str) -> str:
+        with self._token_lock:
+            return self._web_translate_locked(text, src_code, tgt_code)
+
+    def _web_translate_locked(self, text: str, src_code: str, tgt_code: str) -> str:
         """多域名轮换；token 失效自动刷新；全部域名失败则抛 RateLimited。"""
         src = to_provider_lang("bing", src_code)
         tgt = to_provider_lang("bing", tgt_code)
@@ -139,8 +150,7 @@ class BingTranslator(BaseTranslator):
             "Accept": "*/*",
             "X-Requested-With": "XMLHttpRequest",
         }
-        data = {"fromLang": src, "text": text, "to": tgt,
-                "token": self._token, "key": self._key}
+        data = {"fromLang": src, "text": text, "to": tgt, "token": self._token, "key": self._key}
         return self._post(url, data=data, headers=headers, timeout=BING_WEB_TIMEOUT)
 
     def _web_call(self, text: str, src: str, tgt: str) -> str:

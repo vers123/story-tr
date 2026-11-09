@@ -3,6 +3,7 @@
 只读、默认不联网；`--probe` 才访问本地 RWKV 服务。数据/状态损坏 → FAIL（返回 1）；
 本地服务不可达 → WARN。已移除 ffmpeg / 字体 / Pillow / PySide6 / mcp 检查。
 """
+
 from __future__ import annotations
 
 import json
@@ -15,7 +16,7 @@ from story_tr.config import load_settings
 from story_tr.errors import ExitCode
 from story_tr.transport.rwkv import RwkvTranslator
 
-from . import _io
+from . import storage
 
 log = logging.getLogger("story_tr.services.doctor")
 
@@ -34,8 +35,9 @@ def _rwkv_config_row(settings: Any) -> tuple[str, str, str]:
         model_detail = "模型文件存在"
     else:
         model_detail = f"模型文件不存在: {model_path}"
-    detail = "{}（{}；{}）".format(settings.rwkv_api_url,
-                              "模板已配置" if template_ok else "模板为空", model_detail)
+    detail = "{}（{}；{}）".format(
+        settings.rwkv_api_url, "模板已配置" if template_ok else "模板为空", model_detail
+    )
     ok = template_ok and (not model_path or os.path.exists(model_path))
     return (OK if ok else WARN, "本地 RWKV", detail)
 
@@ -59,12 +61,13 @@ def collect(home_: str, probe: bool = False) -> list[tuple[str, str, str]]:
     rows.append((OK, "Python", f"{sys.version.split()[0]} ({sys.platform})"))
     rows.append((OK if os.path.isdir(home_) else FAIL, "工作目录", home_))
 
-    char_file = _io.char_index_path(home_)
+    char_file = storage.char_index_path(home_)
     rows.append((OK if os.path.exists(char_file) else FAIL, "角色索引", char_file))
 
     data_dir = os.path.join(home_, "data")
-    rows.append((OK if os.path.isdir(data_dir) and os.access(data_dir, os.W_OK) else WARN,
-                 "data/ 可写", data_dir))
+    rows.append(
+        (OK if os.path.isdir(data_dir) and os.access(data_dir, os.W_OK) else WARN, "data/ 可写", data_dir)
+    )
 
     state_path = os.path.join(home_, STATE_FILENAME)
     if not os.path.exists(state_path):
@@ -81,12 +84,16 @@ def collect(home_: str, probe: bool = False) -> list[tuple[str, str, str]]:
     if not os.path.exists(env_path):
         rows.append((WARN, ".env", "不存在；将使用免 key 通道（可复制 .env.example）"))
     else:
-        configured = [name for name, value in (
-            ("GOOGLE_API_KEY", settings.google_api_key),
-            ("BING_API_KEY", settings.bing_api_key),
-            ("BAIDU_APPID", settings.baidu_appid),
-            ("BAIDU_APPKEY", settings.baidu_appkey),
-        ) if value]
+        configured = [
+            name
+            for name, value in (
+                ("GOOGLE_API_KEY", settings.google_api_key),
+                ("BING_API_KEY", settings.bing_api_key),
+                ("BAIDU_APPID", settings.baidu_appid),
+                ("BAIDU_APPKEY", settings.baidu_appkey),
+            )
+            if value
+        ]
         rows.append((OK, ".env", "已配置：%s" % (", ".join(configured) or "无（免 key 通道）")))
 
     rows.append(_rwkv_config_row(settings))
@@ -107,7 +114,7 @@ def render(rows: list[tuple[str, str, str]]) -> str:
 
 
 def run(probe: bool = False, data_dir: str | None = None) -> ExitCode:
-    home_ = _io.home(data_dir)
+    home_ = storage.home(data_dir)
     rows = collect(home_, probe=probe)
     print(render(rows))
     failed = [name for status, name, _ in rows if status == FAIL]

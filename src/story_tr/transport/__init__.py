@@ -1,4 +1,5 @@
 """传输层：统一后端抽象与 google / bing / baidu / rwkv 实现。"""
+
 from __future__ import annotations
 
 from story_tr.config import Settings

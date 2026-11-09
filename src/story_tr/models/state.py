@@ -1,4 +1,5 @@
 """状态文件模型：批量任务与单条链路任务的续跑状态。"""
+
 from typing import Any
 
 from pydantic import BaseModel

@@ -1,4 +1,5 @@
 """百度翻译开放平台后端：APPID + APPKEY 签名，QPS=1 限速。"""
+
 from __future__ import annotations
 
 import hashlib

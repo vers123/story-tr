@@ -2,6 +2,7 @@
 
 签名用于续跑时校验「本次参数与上次是否一致」；不落盘，只做 dict 比较与差异描述。
 """
+
 from typing import Any
 
 _SIG_LABELS = (

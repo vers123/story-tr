@@ -1,4 +1,5 @@
 """Google 翻译后端：免 key clients5 端点与官方 Cloud Translation v2。"""
+
 from __future__ import annotations
 
 from html import unescape
@@ -10,8 +11,10 @@ from .base import BaseTranslator, split_chunks
 
 GOOGLE_DICT_URL = "https://clients5.google.com/translate_a/t"
 GOOGLE_API_URL = "https://translation.googleapis.com/language/translate/v2"
-GOOGLE_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-             "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+GOOGLE_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
 
 # 单次请求的文本上限：Google 免费 GET 端点约 1800 字（中文 URL 编码后约 9 字节/字）即 400，故留余量
 MAX_CHARS_PER_REQUEST = 1500
@@ -62,8 +65,11 @@ class GoogleTranslator(BaseTranslator):
         qs = [("client", "dict-chrome-ex"), ("sl", src), ("tl", tgt)] + [("q", t) for t in texts]
         resp = self._get(GOOGLE_DICT_URL, params=qs, timeout=30.0)
         data = self._read_json(resp)
-        if (isinstance(data, list) and len(data) == len(texts)
-                and all(isinstance(x, str) and x.strip() for x in data)):
+        if (
+            isinstance(data, list)
+            and len(data) == len(texts)
+            and all(isinstance(x, str) and x.strip() for x in data)
+        ):
             return [x.strip() for x in data]
         raise BadOutput(f"google(dict) 批量返回形状不符（期望 {len(texts)} 条）")
 
@@ -72,8 +78,9 @@ class GoogleTranslator(BaseTranslator):
         payload: dict[str, object] = {"q": text, "target": tgt, "format": "text"}
         if src:
             payload["source"] = src
-        resp = self._post(GOOGLE_API_URL, params={"key": self.settings.google_api_key},
-                          json=payload, timeout=60.0)
+        resp = self._post(
+            GOOGLE_API_URL, params={"key": self.settings.google_api_key}, json=payload, timeout=60.0
+        )
         if resp.status_code in (401, 403):
             raise BadOutput("google(api) 认证失败（检查 GOOGLE_API_KEY）")
         data = self._read_json(resp)

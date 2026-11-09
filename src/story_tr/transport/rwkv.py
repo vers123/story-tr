@@ -9,6 +9,7 @@
     模型未加载（响应文本含关键词）→ ModelNotLoaded；
     空结果 / 与原文相同 / 不含汉字 → BadOutput（有限重试）。
 """
+
 from __future__ import annotations
 
 import re
@@ -23,9 +24,14 @@ from .base import BaseTranslator, split_chunks
 DEFAULT_URL = "http://127.0.0.1:8000"
 MODEL_NAME = "rwkv"
 DEFAULT_STOP = [
-    "\n\nUser", "\n\nBot", "\n\nAssistant", "\n\nHuman", "\n\nQ",
+    "\n\nUser",
+    "\n\nBot",
+    "\n\nAssistant",
+    "\n\nHuman",
+    "\n\nQ",
     # translate-20times-3B 的训练格式以 English/Chinese 分段，需阻止模型续写下一组
-    "\n\nEnglish:", "\n\nChinese:",
+    "\n\nEnglish:",
+    "\n\nChinese:",
 ]
 
 # 中文输出校验：至少含一个汉字（目标始终是中文）
@@ -87,9 +93,7 @@ class RwkvTranslator(BaseTranslator):
                 last_bad = exc
         raise last_bad
 
-    def _translate_chunks(
-        self, source: str, chunks: list[str], template: str, src: str, tgt: str
-    ) -> str:
+    def _translate_chunks(self, source: str, chunks: list[str], template: str, src: str, tgt: str) -> str:
         """逐块生成并拼接；更新 last_usage / token 计数等元数据。"""
         url = self._base_url + "/v1/completions"
         self.last_chunks = len(chunks)

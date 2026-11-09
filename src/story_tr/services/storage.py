@@ -1,8 +1,9 @@
-"""services 层共享 IO：工作目录、路径助手、原子 JSON 读写与后端解析。
+"""services 层共享存储：工作目录、路径助手、原子读写与后端解析。
 
-语义对齐旧 `paths.py` 与 `statefile.py`，但统一走 `story_tr.config.resolve_data_dir`
-与 pydantic 序列化；本模块不 import typer / rich。
+路径解析统一走 `story_tr.config.resolve_data_dir`，JSON 统一走 pydantic 序列化；
+本模块不 import typer / rich。
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -57,24 +58,21 @@ def rel(home_: str, path: str) -> str:
     return os.path.relpath(path, home_).replace(os.sep, "/")
 
 
+def human_size(size: int) -> str:
+    """字节数 → 人类可读（B / KB / MB / GB）。"""
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            return ("%d %s" if unit == "B" else "%.1f %s") % (value, unit)
+        value /= 1024.0
+    return f"{value:.1f} GB"
+
+
 # --------------------------------------------------------------------------- #
 # JSON 原子读写
 # --------------------------------------------------------------------------- #
-def atomic_write_json(path: str, obj: Any) -> None:
-    """原子写 JSON：先写临时文件，保留上一版为 `.bak`，再 `os.replace`。
-
-    pydantic 对象先 `model_dump(mode="json")` 再 `json.dumps(..., ensure_ascii=False, indent=2)`。
-    """
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    if hasattr(obj, "model_dump"):
-        obj = obj.model_dump(mode="json")
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
-    if os.path.exists(path):
-        with contextlib.suppress(OSError):  # 备份失败不影响主写入
-            shutil.copy2(path, path + ".bak")
-    # Windows 上杀软 / 索引可能短暂占用目标文件，`os.replace` 失败时退避重试。
+def _replace_with_retry(tmp: str, path: str) -> None:
+    """`os.replace` 失败（Windows 杀软 / 索引短暂占用）时退避重试。"""
     for attempt in range(5):
         try:
             os.replace(tmp, path)
@@ -83,6 +81,48 @@ def atomic_write_json(path: str, obj: Any) -> None:
             if attempt == 4:
                 raise
             time.sleep(0.05 * (attempt + 1))
+
+
+def _ensure_parent(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+
+def atomic_write_text(path: str, text: str, *, backup: bool = False, skip_if_unchanged: bool = True) -> bool:
+    """原子写文本：临时文件 + `os.replace`；可选保留上一版 `.bak`。
+
+    `skip_if_unchanged` 为真时先读盘比较，内容一致直接返回 `False`（不落盘），
+    返回 `True` 表示确实写入了文件。
+    """
+    if skip_if_unchanged:
+        try:
+            with open(path, encoding="utf-8") as f:
+                if f.read() == text:
+                    return False
+        except OSError:
+            pass
+    _ensure_parent(path)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    if backup and os.path.exists(path):
+        with contextlib.suppress(OSError):  # 备份失败不影响主写入
+            shutil.copy2(path, path + ".bak")
+    _replace_with_retry(tmp, path)
+    return True
+
+
+def json_text(obj: Any) -> str:
+    """把 pydantic / 普通对象序列化为稳定 JSON 文本（`ensure_ascii=False, indent=2`）。"""
+    if hasattr(obj, "model_dump"):
+        obj = obj.model_dump(mode="json")
+    return json.dumps(obj, ensure_ascii=False, indent=2)
+
+
+def atomic_write_json(path: str, obj: Any, *, backup: bool = True, skip_if_unchanged: bool = True) -> bool:
+    """原子写 JSON（默认保留上一版 `.bak`，内容未变则跳过写入）。"""
+    return atomic_write_text(path, json_text(obj), backup=backup, skip_if_unchanged=skip_if_unchanged)
 
 
 def load_json_with_backup(path: str) -> Any:
@@ -105,8 +145,7 @@ def load_json_with_backup(path: str) -> Any:
         corrupt = path + ".corrupt-" + datetime.now().strftime("%Y%m%d_%H%M%S")
         with contextlib.suppress(OSError):
             os.replace(path, corrupt)
-        log.warning("状态文件无法读取（%s），已保留为 %s，本次按无进度启动。",
-                    exc, os.path.basename(corrupt))
+        log.warning("状态文件无法读取（%s），已保留为 %s，本次按无进度启动。", exc, os.path.basename(corrupt))
         return None
 
 
