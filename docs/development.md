@@ -64,7 +64,7 @@ pytest -q --cov=story_tr --cov-report=term-missing
 ## 发布流程
 
 1. **确认版本号**：按 SemVer 决定 `MAJOR.MINOR.PATCH`，同步修改 `src/story_tr/__init__.py` 的 `__version__`（打包版本由 `pyproject.toml` 的 `dynamic = ["version"]` 读取该字段）。
-2. **更新 `CHANGELOG.md`**：遵循 Keep a Changelog 约定 —— `## 未发布` 累积变更，发布时改为 `## [X.Y.Z] - YYYY-MM-DD`；条目按类别分组（**新增** / **变更** / **改进** / **性能** / **修复** / **重构** / **工程** / **测试** / **破坏性**）。
+2. **更新 `CHANGELOG.md`**：遵循 Keep a Changelog 1.1.0 —— 日常累积在 `## [Unreleased]`，发布时改为 `## [X.Y.Z] - YYYY-MM-DD`；条目按 `### Added` / `### Changed` / `### Removed` / `### Fixed` / `### Performance` / `### Refactor` / `### Testing` / `### Build & CI` 分组，并在文件底部补 `compare` 链接。
 3. **本地校验**：`ruff check .`、`ruff format --check .`、`mypy src/story_tr`、`pytest -q --cov=story_tr`（等价于 CI 的 quality + test job）；也可直接运行仓库自带的 `scripts/verify.ps1` / `scripts/verify.sh`。
 4. **提交前钩子**：`pip install pre-commit` 后执行 `pre-commit install`，把校验挂到 `git commit` 前（钩子配置见 `.pre-commit-config.yaml`）。
 5. **打标签并推送**：`git tag -a vX.Y.Z -m "vX.Y.Z"` → `git push origin vX.Y.Z`（标签必须以 `v` 开头，例如 `v2.0.0`）。
