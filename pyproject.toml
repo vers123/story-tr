@@ -20,6 +20,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Typing :: Typed",
   "Topic :: Utilities",
 ]
 dependencies = [
@@ -33,7 +34,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "ruff", "pytest", "pytest-cov", "build", "twine"]
+dev = [
+  "mypy==2.4.1",
+  "ruff==0.17.4",
+  "pytest==9.2.0",
+  "pytest-cov==7.1.0",
+  "build==1.6.1",
+  "twine==7.0.0",
+]
 
 [project.scripts]
 story-tr = "story_tr.cli:app"
@@ -47,6 +55,9 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+story_tr = ["py.typed"]
 
 [tool.setuptools.dynamic]
 version = { attr = "story_tr.__version__" }
@@ -73,6 +84,7 @@ strict = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
 
 [tool.coverage.run]
 source = ["story_tr"]

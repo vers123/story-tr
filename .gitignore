@@ -13,9 +13,12 @@ dist/
 .mypy_cache/
 .pip-tmp/
 pytest-of-*/
+.idea/
+.vscode/
 
 # 覆盖率
 .coverage
+.coverage.*
 htmlcov/
 
 # 系统临时文件

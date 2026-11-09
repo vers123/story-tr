@@ -1,0 +1,48 @@
+name: Bug 反馈
+description: 报告 story-tr 的缺陷或异常行为
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请先搜索已有 issue，确认问题尚未被报告。
+  - type: input
+    id: version
+    attributes:
+      label: story-tr 版本
+      description: 运行 story-tr --version 获取当前版本号
+      placeholder: 例如 v2.0.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Python 版本与操作系统
+      description: 运行 python --version，并注明操作系统及其版本
+      placeholder: 例如 Python 3.13.1 / Windows 11 23H2
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: 执行的命令
+      description: 粘贴可复现问题的完整命令
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 期望行为 vs 实际行为
+      description: 描述你期望的结果，以及实际发生的结果
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志与报错信息
+      description: 粘贴相关日志或堆栈；提交前请先脱敏 .env 中的 API Key、Token 等密钥
+      render: text
+    validations:
+      required: false
