@@ -1,20 +1,20 @@
-# 依赖锁定（仅记录本机/CI 验证过的直接依赖版本，便于复现）
+# 依赖锁定（记录本机/CI 验证过的直接依赖版本，便于复现）
 # 更新依赖后请重新生成：pip install -e ".[dev]" 后按实际版本修改
-# 库安装仍以 pyproject.toml 的宽松约束为准，本文件不参与 pip 解析。
+# 运行时库安装以 pyproject.toml 的宽松约束为准；dev 工具在 pyproject.toml 中按本文件固定版本。
 
 # 核心运行时
-typer==0.27.3
+typer==0.28.0
 httpx==0.28.1
-pydantic==2.14.1
-pydantic-settings==2.16.1
+pydantic==2.14.3
+pydantic-settings==2.16.2
 rich==15.0.0
 tenacity==9.2.1
 langdetect==1.0.9
 
 # 开发/测试
-mypy==2.4.0
-ruff==0.17.1
-pytest==9.1.1
+mypy==2.4.1
+ruff==0.17.4
+pytest==9.2.0
 pytest-cov==7.1.0
 build==1.6.1
 twine==7.0.0
