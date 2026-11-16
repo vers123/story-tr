@@ -9,6 +9,8 @@
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-11-16
+
 ### Fixed
 
 - 修复 Python 3.10 / 3.11 下 `translate`（含 `--plan` / `--reconcile` / `--tts-only`）因推导式自身作用域导致 `locals()` 取参失败、报 `KeyError: 'stories'` 的问题（先快照 `locals()` 再在推导式中使用）。
@@ -415,7 +417,8 @@
 - **翻译**：`translate_stories.py` 批量跑故事链路，输出分段 + 全文 + 语音（gTTS）
 - **工程**：`data/` 不入库（可由脚本重建）、MIT [LICENSE](LICENSE)、依赖清单、README
 
-[Unreleased]: https://github.com/vers123/story-tr/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/vers123/story-tr/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/vers123/story-tr/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/vers123/story-tr/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/vers123/story-tr/compare/v1.0.1...v2.0.0
 [1.0.1]: https://github.com/vers123/story-tr/compare/v1.0.0...v1.0.1

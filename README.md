@@ -2,7 +2,7 @@
 
 原神角色故事双语（中 / 英）文本抓取 + 「来回翻译 N 次」链路工具。
 
-![version](https://img.shields.io/badge/version-2.1.0-blue)
+![version](https://img.shields.io/badge/version-2.1.1-blue)
 ![python](https://img.shields.io/badge/python-3.10%20%7C%203.14-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![CI](https://img.shields.io/github/actions/workflow/status/vers123/story-tr/ci.yml?branch=main&label=CI)

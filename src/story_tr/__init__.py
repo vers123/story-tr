@@ -4,4 +4,4 @@
 `services`（编排）/ `cli`（typer + rich）五层单向依赖。
 """
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
