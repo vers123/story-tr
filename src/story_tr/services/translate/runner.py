@@ -290,7 +290,10 @@ def build_plan(
     if code is not None or ctx is None:
         return None, code
     home_, selected, providers, langs, chain_label = ctx
-    opts = {k: locals()[k] for k in _PLAN_KEYS}
+    # Python < 3.12 的推导式有独立作用域：必须先快照 locals() 再在推导式中取参数，
+    # 否则 `locals()` 会返回推导式自身的作用域（3.10/3.11 下 KeyError）。
+    frame = locals()
+    opts = {k: frame[k] for k in _PLAN_KEYS}
     plan = _make_plan(home_, selected, providers, langs, chain_label, **opts)
     return plan, None
 

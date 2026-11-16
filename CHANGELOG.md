@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 修复 Python 3.10 / 3.11 下 `translate`（含 `--plan` / `--reconcile` / `--tts-only`）因推导式自身作用域导致 `locals()` 取参失败、报 `KeyError: 'stories'` 的问题（先快照 `locals()` 再在推导式中使用）。
+
 ## [2.1.0] - 2026-11-16
 
 ### Added

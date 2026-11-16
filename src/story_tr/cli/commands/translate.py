@@ -74,8 +74,9 @@ def translate_cmd(
     """批量翻译角色故事（「来回翻译 N 次」链路）。"""
     if tts_only and no_tts:
         raise typer.BadParameter("--tts-only 与 --no-tts 互斥，只能二选一。")
-    # 透传全部选项（locals 快照不含随后才创建的名字）
-    options: dict[str, Any] = {k: v for k, v in locals().items() if k != "ctx"}
+    # 先快照 locals 再推导（兼容 Python 3.10/3.11 的推导式独立作用域）
+    frame = locals()
+    options: dict[str, Any] = {k: v for k, v in frame.items() if k != "ctx"}
     options["char_ids"] = list(char_ids or [])
     options["provider"] = provider_arg(provider)
     options["plan_only"] = options.pop("plan")

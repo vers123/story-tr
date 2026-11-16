@@ -108,7 +108,9 @@ def run(
     cancel: Any = None,
 ) -> ExitCode:
     """批量翻译入口，返回 `ExitCode`。"""
-    options = {k: v for k, v in locals().items() if k in _BUILD_KEYS}
+    # 快照后再推导：兼容 Python 3.10/3.11 的推导式独立作用域
+    frame = locals()
+    options = {k: v for k, v in frame.items() if k in _BUILD_KEYS}
     plan, code = runner.build_plan(**options)
     if code is not None or plan is None:
         return code or ExitCode.USAGE
