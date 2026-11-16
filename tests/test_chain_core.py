@@ -13,7 +13,7 @@ from story_tr.errors import (
     UnsupportedLanguage,
 )
 from story_tr.services import chain_core
-from tests.support import FakeTranslator
+from tests.support import FakeBatchTranslator, FakeTranslator
 
 
 class TestTranslateStep:
@@ -103,3 +103,11 @@ class TestTranslateStep:
         merged = chain_core.merge_rwkv([step])
         assert merged is not None and merged.chunks == 1
         assert chain_core.merge_rwkv([]) is None
+
+    def test_batch_translator_selection(self):
+        plain = FakeTranslator(name="bing")
+        batch = FakeBatchTranslator(name="google")
+        assert chain_core.batch_translator([plain, batch], ["bing", "google"], False) == ("google", batch)
+        assert chain_core.batch_translator([plain], ["bing"], False) is None
+        unavailable = FakeBatchTranslator(name="google", available=(False, "nokey"))
+        assert chain_core.batch_translator([unavailable], ["google"], False) is None

@@ -18,12 +18,13 @@
 
 | 模块 | 职责 |
 | --- | --- |
-| `storage.py` | 工作目录 / 路径助手、原子写（含 `.bak` 与跳过未变化）、后端解析 |
-| `story_inputs.py` | 角色 id / 范围解析、故事 Markdown 读取与发现 |
-| `chain_core.py` | 翻译链共享语义：签名、后端轮换、单步翻译、结果合并 |
+| `storage.py` | 工作目录 / 路径助手（含 `result-<tag>/`）、原子写（含 `.bak` 与跳过未变化）、后端解析 |
+| `story_inputs.py` | 角色 id / 范围解析、角色索引读取、故事 Markdown 读取与发现 |
+| `chain_core.py` | 翻译链共享语义：签名、后端轮换、单步/批量后端选择、单步翻译、结果合并 |
 | `fetch_pure.py` / `fetch_write.py` | 抓取纯函数（slug / 指纹 / 差异）与落盘（故事 md、档案 JSON、索引） |
-| `status_scan.py` | `result/` 单次遍历统计（文件计数、覆盖、语言分布） |
-| `translate/` | 批量翻译包：`tasks`（任务）、`chain_runner`（单份执行）、`runner`（批次调度）、`tts` / `tts_only`（语音）、`summary`（汇总）、`errors`（控制流异常） |
+| `status_scan.py` | `result[-tag]/` 单次遍历统计（文件计数、覆盖、语言分布、已存在结果目录） |
+| `export.py` | 结果数据集导出（JSONL / Parquet + manifest，只读 `data/`） |
+| `translate/` | 批量翻译包：`tasks`（任务）、`chain_runner`（单份执行）、`batch_runner`（按故事锁步批量）、`runner`（批次调度/状态/失败登记/对账）、`estimate`（`--plan` 估算）、`retry`（失败重试轮）、`failures`（失败登记读写）、`tts` / `tts_only`（语音）、`summary`（汇总）、`errors`（控制流异常） |
 
 ## cli 内部拆分
 
@@ -52,6 +53,7 @@ story-tr/
 │ ├── errors.py # StoryTrError 层级 + ExitCode
 │ ├── models/ # 数据契约
 │ │ ├── character.py
+│ │ ├── failure.py # 失败登记（FailureRegistry / FailureRecord）
 │ │ ├── state.py
 │ │ └── translation.py
 │ ├── core/ # 纯逻辑
@@ -62,7 +64,7 @@ story-tr/
 │ │ └── state.py
 │ ├── transport/ # 后端抽象与实现
 │ │ ├── base.py
-│ │ ├── google.py
+│ │ ├── google.py # 含批量请求（translate_batch）
 │ │ ├── bing.py
 │ │ ├── baidu.py
 │ │ ├── rwkv.py
@@ -81,9 +83,14 @@ story-tr/
 │ │ ├── status.py
 │ │ ├── doctor.py
 │ │ ├── eval.py
+│ │ ├── export.py # 数据集导出
 │ │ └── translate/ # 批量翻译包
 │ │ ├── tasks.py
 │ │ ├── chain_runner.py
+│ │ ├── batch_runner.py # 按故事锁步批量
+│ │ ├── estimate.py # translate --plan 只读估算
+│ │ ├── retry.py # 失败重试轮（指数退避）
+│ │ ├── failures.py # 失败登记文件读写
 │ │ ├── runner.py
 │ │ ├── tts.py
 │ │ ├── tts_only.py
@@ -100,10 +107,11 @@ story-tr/
 │ ├── clean.py
 │ ├── status.py
 │ ├── doctor.py
-│ └── eval.py
+│ ├── eval.py
+│ └── export.py
 ├── tests/ # pytest：与被测模块一对一
 ├── docs/ # 文档（本目录）
-├── .github/workflows/ # ci.yml（质量 / 测试 / 构建）与 release.yml（tag 发布）
+├── .github/workflows/ # ci.yml（质量 / 测试矩阵 / Windows / 构建）与 release.yml（tag 发布）
 ├── scripts/ # 一键校验（verify.ps1 / verify.sh）
 ├── pyproject.toml # 打包、依赖、ruff / mypy / pytest 配置
 ├── CHANGELOG.md

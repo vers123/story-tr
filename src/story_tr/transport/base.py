@@ -48,6 +48,7 @@ class BaseTranslator:
 
     name: str = ""
     min_interval: float = 0.0
+    supports_batch: bool = False
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings

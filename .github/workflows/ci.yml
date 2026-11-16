@@ -76,6 +76,28 @@ jobs:
       - name: pytest（覆盖率）
         run: pytest -q --cov=story_tr --cov-report=term-missing
 
+  test-windows:
+    timeout-minutes: 25
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements.lock
+
+      - name: 安装 dev 依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: pytest（Windows 路径/原子写回归）
+        run: pytest -q
+
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 15

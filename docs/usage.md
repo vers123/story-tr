@@ -107,7 +107,7 @@ story-tr folders
 
 ### `story-tr translate`
 
-批量翻译角色故事（「来回翻译 N 次」链路），结果写入 `data/story/character/{id}/result/{story}/`。
+批量翻译角色故事（「来回翻译 N 次」链路），结果写入 `data/story/character/{id}/result/{story}/`（`--result-tag <tag>` 时写入并列的 `result-<tag>/`）。
 
 ```bash
 # 单个角色（默认处理其全部含内容故事）
@@ -142,9 +142,14 @@ story-tr translate --all-characters
 | `--overwrite` | 覆盖已有结果 | 关 |
 | `--reset` | 重置批次状态并忽略签名不一致 | 关 |
 | `--revalidate` | 源文变化时重新翻译 | 关 |
-| `--no-cache` | 不使用已有结果缓存 | 关 |
-| `--fail-fast` | 首个失败即中止 | 关 |
-| `--max-failures` | 失败任务上限 | `20` |
+| `--no-cache` | 忽略批次状态中的 `completed` 记录（仍按磁盘结果判断缓存） | 关 |
+| `--result-tag` | 结果目录标签：写入 `result-<tag>/`（与默认结果隔离，签名含 tag） | 空 |
+| `--batch` / `--no-batch` | 同一故事的全部任务按链路步骤批量请求（仅 Google 生效；批量失败自动回退逐条） | 开 |
+| `--plan` | 只读估算任务量 / 请求数 / 签名一致性，不执行翻译 | 关 |
+| `--reconcile` | 按磁盘已有结果对账批次状态（补缺失、删失效，不删除结果文件） | 关 |
+| `--retry-rounds` | 失败自动重试轮数（0 = 关闭；指数退避 5s→60s） | `5` |
+| `--fail-fast` | 首轮首个失败即停止剩余任务（仍会进入自动重试） | 关 |
+| `--max-failures` | 首轮失败任务上限（达到后停止首轮剩余任务，仍进入重试；TTS 失败也计入） | `20` |
 | `--no-tts` | 不生成语音 | 关 |
 | `--tts-only` | 只补生成缺失语音（不重译文本；`--overwrite` 可重生成已有语音） | 关 |
 
@@ -152,9 +157,11 @@ story-tr translate --all-characters
 - 全文：整篇再独立跑一遍完整链路，产出 `full.json`。
 - 标题：`zh.md` frontmatter 的 `title` 始终跑一遍，产出 `title.json`。
 - 纯符号段落（无文字特征）原样保留、不发请求（结果标 `passthrough: true`）。
-- 续跑：`.translate_stories_state.json`（`BatchState`）记录已完成任务与参数签名；参数不一致要求 `--reset`。
-- 失败清单写 `logs/failures_<时间戳>.json`；失败项记录后继续，退出码 `7`。
-- 语音：TTS 连接失败会自动重试 3 次（指数退避）；仍未生成时写入 `logs/tts_failures_<时间戳>.json`，翻译结果照常落盘，可用 `--tts-only` 补跑（只补语音、不重译文本）。
+- 续跑：`.translate_stories_state.json`（`BatchState`）记录已完成任务与参数签名；参数不一致要求 `--reset`；可用 `--reconcile` 按磁盘结果重建记录。
+- 批量模式（`--batch`，默认开）把同一故事所有任务在同一步的当前文本打包进一次请求；`--workers` 在批量模式下不生效（按故事串行），可用 `--no-batch` 恢复逐条并发。批量失败会自动回退逐条翻译。
+- 失败登记：翻译失败/TTS 失败都写入 `.translate_failures_state.json`，并在本次运行内按 `--retry-rounds` 自动重试（连接/限流/配额/语言/业务失败均计入；模型未加载仍立即中止）；翻译失败重译整条，TTS 失败只补语音。
+- 失败清单按轮写 `logs/failures_<时间戳>_r<轮>.json` 与 `logs/tts_failures_<时间戳>_r<轮>.json`；重试耗尽仍有失败时以退出码 `7` 结束，登记文件保留供排查。
+- 语音：TTS 连接失败会先按 3 次指数退避重试；仍失败时翻译结果照常落盘，并计入失败登记进入自动重试。
 
 ### `story-tr chain`
 
@@ -188,13 +195,14 @@ story-tr chain --dry-run # 只展示路线，不翻译
 
 ### `story-tr clean`
 
-清理 `data/story/character/{id}/result/` 下的翻译产物（保留 `result/` 目录本身）。
+清理 `data/story/character/{id}/result/`（或 `result-<tag>/`）下的翻译产物（保留目录本身）。
 
 ```bash
 story-tr clean 10000021
 story-tr clean --all-characters
 story-tr clean 10000021 --stories vision
 story-tr clean --all-characters --dry-run # 只预览，不删除
+story-tr clean 10000021 --result-tag cloud
 ```
 
 | 参数 | 说明 |
@@ -202,16 +210,18 @@ story-tr clean --all-characters --dry-run # 只预览，不删除
 | `char_ids`（位置参数） | 角色 id / id 范围（可多个，逗号分隔） |
 | `--all-characters` | 处理全部角色（与 `char_ids` 二选一） |
 | `--stories` | 仅清理指定故事（逗号分隔） |
+| `--result-tag` | 清理指定结果标签目录（默认清理 `result/`） |
 | `--dry-run` | 只预览，不删除 |
 | `-y` / `--yes` | 跳过交互确认 |
 | `--keep-state` | 保留状态记录 |
 
 - 默认交互确认；`--dry-run` 预览、`-y` 跳过。
-- 默认同步移除 `.translate_stories_state.json` 中对应记录并**重置批次签名**；`--keep-state` 可保留。
+- 默认同步移除 `.translate_stories_state.json` 中对应记录并**重置批次签名**；`--keep-state` 可保留；`--result-tag` 只动标签与本次一致的记录。
+- 同时清理选中角色/故事的失败登记（`.translate_failures_state.json`）。
 
 ### `story-tr status`
 
-只读报告工作目录、数据覆盖、结果 / 语音数量、磁盘占用与批量进度。默认不联网、不写文件。
+只读报告工作目录、数据覆盖、结果 / 语音数量、磁盘占用、批量进度与失败登记。默认不联网、不写文件。
 
 ```bash
 story-tr status # 人类可读
@@ -219,7 +229,10 @@ story-tr status --json # JSON 输出
 story-tr status --deep # 统计源语言分布（读取全部 seg JSON，较慢）
 story-tr status --probe # 探测本地 RWKV 服务
 story-tr status --manifest # 写入 data/manifest.json
+story-tr status --result-tag cloud # 统计指定结果标签目录
 ```
+
+- 输出会同时显示“批量状态记录数 / 磁盘结果数”，不一致时提示 `translate --reconcile`；存在未解决失败时显示“失败登记”。
 
 ### `story-tr doctor`
 
@@ -252,6 +265,31 @@ story-tr eval --limit 20 --templates builtin
 | `--out` | 报告输出目录 | `logs/` |
 | `--rwkv-url` | 覆盖本地 RWKV 服务地址 | — |
 | `--rwkv-template` | 覆盖 RWKV 提示词模板 | — |
+| `--result-tag` | 用指定结果标签目录做基线（默认 `result/`） | 空 |
+
+### `story-tr export`
+
+把结果目录导出为数据集（默认 JSONL）+ `manifest.json`；只读 `data/`，输出默认写 `out/export/`。parquet 需要可选依赖 `pip install "story-tr[export]"`。
+
+```bash
+story-tr export --all-characters
+story-tr export 10000021 --format jsonl --with-steps
+story-tr export --result-tag cloud --out out/cloud
+story-tr export --format parquet
+```
+
+| 参数 | 说明 | 默认 |
+| --- | --- | --- |
+| `char_ids`（位置参数） | 角色 id / id 范围（可多个，逗号分隔） | 全部角色 |
+| `--all-characters` | 导出全部角色（与 `char_ids` 二选一） | — |
+| `--stories` | 仅导出指定故事（逗号分隔） | 空 |
+| `--result-tag` | 导出指定结果标签目录 | 空（`result/`） |
+| `--out` | 输出目录 | `out/export` |
+| `--format` | `jsonl` / `parquet` | `jsonl` |
+| `--with-steps` | 附带每步中间结果与 RWKV 元数据（parquet 中序列化为 JSON 字符串） | 关 |
+
+- 记录为扁平结构：角色 / 故事 / 结果键 / 源文与译文 / mode / chain / providers / languages / 音频文件名 / 结果文件路径。
+- `manifest.json` 记录生成时间、工具版本、结果 tag、计数（角色 / 故事 / 任务 / title / full / 段 / 语音）与抓取指纹（`_fetch_all.json`）。
 
 ## 退出码
 
@@ -261,12 +299,12 @@ story-tr eval --limit 20 --templates builtin
 | --- | --- | --- |
 | `0` | 完成 | 正常结束 |
 | `1` | 参数或前置条件错误 | 参数不合法 / 缺少数据等 |
-| `2` | 语言不受支持 | 后端不支持该语言 |
+| `2` | 语言不受支持 | `chain` 等单次执行命令；`translate` 中会记为失败并重试 |
 | `3` | 批量状态与上次不一致 | 需 `--reset` 或 `clean` |
-| `4` | 已暂停（限流或业务错误） | 业务错误重试耗尽；含本地模型未加载 |
-| `5` | 后端连接失败 | 所有后端连接 / 超时 / 5xx 失败 |
+| `4` | 已暂停 | 本地模型未加载（快速中止） |
+| `5` | 后端连接失败 | `chain` / RWKV 预检；`translate` 中会记为失败并重试 |
 | `6` | 已取消（进度已保存） | 用户主动取消 |
-| `7` | 部分任务失败（失败清单已保存） | 重跑可续 |
-| `8` | 今日配额已耗尽（进度已保存） | 次日续跑 |
+| `7` | 部分任务失败 | 重试轮耗尽仍有失败；失败登记与日志已保存，重跑可续 |
+| `8` | 今日配额已耗尽 | `chain` 等；`translate` 中配额耗尽可能记为失败并重试（有轮数上限） |
 
 > 未捕获的异常会以 `-1`（异常，见日志）结束。

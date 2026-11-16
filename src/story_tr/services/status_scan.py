@@ -61,8 +61,32 @@ def _scan_story_dir(path: str, deep: bool, counts: dict[str, int], langs: dict[s
     return has_segment
 
 
-def scan_results(root: str, deep: bool = False) -> dict[str, Any]:
-    """单次遍历 `result/` 树，返回文件计数与覆盖集合。"""
+def result_root(char_dir: str, tag: str | None) -> str:
+    """角色目录下的结果根目录：`result` 或 `result-<tag>`。"""
+    return os.path.join(char_dir, "result" if not tag else "result-" + tag)
+
+
+def detect_result_tags(root: str) -> list[str]:
+    """扫描角色目录，返回已存在的结果根目录名（如 `result` / `result-rwkv20`）。"""
+    tags: set[str] = set()
+    if not os.path.isdir(root):
+        return []
+    for cid_entry in os.scandir(root):
+        if not cid_entry.is_dir():
+            continue
+        try:
+            names = os.listdir(cid_entry.path)
+        except OSError:
+            continue
+        for name in names:
+            is_result = name == "result" or (name.startswith("result-") and len(name) > 7)
+            if is_result and os.path.isdir(os.path.join(cid_entry.path, name)):
+                tags.add(name)
+    return sorted(tags)
+
+
+def scan_results(root: str, deep: bool = False, tag: str | None = None) -> dict[str, Any]:
+    """单次遍历 ``result[-tag]/`` 树，返回文件计数与覆盖集合。"""
     with_result: set[str] = set()
     stories_with_result: set[tuple[str, str]] = set()
     counts: dict[str, int] = dict.fromkeys(COUNT_KEYS, 0)
@@ -77,7 +101,7 @@ def scan_results(root: str, deep: bool = False) -> dict[str, Any]:
     for cid_entry in os.scandir(root):
         if not cid_entry.is_dir():
             continue
-        rdir = os.path.join(cid_entry.path, "result")
+        rdir = result_root(cid_entry.path, tag)
         if not os.path.isdir(rdir):
             continue
         try:

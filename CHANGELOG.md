@@ -9,6 +9,36 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-16
+
+### Added
+
+- `translate --plan`：只读估算任务数 / 请求数 / 签名一致性 / 遗留失败数，不执行翻译、不写文件。
+- `translate --reconcile`：按磁盘已有结果重建选中角色的批次状态（补缺失、删失效，不删除结果文件）。
+- `translate --result-tag <tag>`：结果写入并列的 `result-<tag>/`，与默认 `result/` 隔离；签名纳入 tag。
+- `translate --batch/--no-batch`（默认开）：同一故事的全部任务按链路步骤锁步批量请求，仅 Google 生效，失败自动回退逐条。
+- 失败登记与自动重试：翻译失败 / TTS 失败写入 `.translate_failures_state.json`，本次运行内按 `--retry-rounds`（默认 5）指数退避重试；翻译失败重译整条、TTS 失败只补语音；耗尽仍有失败返回退出码 7。`--tts-only` 同样适用。
+- `story-tr export`：导出 JSONL（可选 Parquet，需 `story-tr[export]`）+ `manifest.json`。
+- `status` 显示状态记录数 / 磁盘结果数 / 遗留失败登记；`clean` 同步清理选中角色的失败登记。
+- Google 批量翻译能力（`translate_batch`，免费端点重复 `q` / 官方 v2 `q` 数组）；`chain_core.batch_translator` 批量后端选择。
+- Windows CI 单版本（3.13）回归 job。
+
+### Changed
+
+- `--no-cache` 真正生效：忽略批次状态中的 `completed` 记录，仍按磁盘结果判断缓存。
+- `translate` 的退出码语义：任务级连接 / 限流 / 配额 / 语言 / 业务失败改为登记失败并重试，最终以 `7` 结束（本地模型未加载仍为 `4`；`chain` 语义不变）。
+- `--fail-fast` 只作用于首轮，首轮提前结束后仍进入自动重试；`--max-failures` 只限制首轮（TTS 失败也计入）。
+
+### Fixed
+
+- `status` 批量状态行把 `providers` 错显示为 `provider=None` 的问题。
+- `--no-cache` 自 v1.0 起未生效的问题。
+- 密钥 / 数据不齐时 `doctor` 对 RWKV 模型路径的提示更明确。
+
+### Removed
+
+- 未使用的 `tenacity` 运行时依赖（重试逻辑为手写退避）。
+
 ## [2.0.0] - 2026-11-09
 
 ### Added
@@ -381,7 +411,8 @@
 - **翻译**：`translate_stories.py` 批量跑故事链路，输出分段 + 全文 + 语音（gTTS）
 - **工程**：`data/` 不入库（可由脚本重建）、MIT [LICENSE](LICENSE)、依赖清单、README
 
-[Unreleased]: https://github.com/vers123/story-tr/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/vers123/story-tr/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/vers123/story-tr/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/vers123/story-tr/compare/v1.0.1...v2.0.0
 [1.0.1]: https://github.com/vers123/story-tr/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/vers123/story-tr/compare/v0.19.0...v1.0.0

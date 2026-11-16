@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from typing import Any
 
 from story_tr.core import parse_frontmatter, split_paragraphs
 
@@ -18,9 +19,14 @@ log = logging.getLogger("story_tr.services.story_inputs")
 
 def load_char_ids(home_: str) -> list[str]:
     """读取 `data/character.json` 中的角色 id 列表（保持文件顺序）。"""
+    return [c["id"] for c in load_chars(home_) if c.get("id")]
+
+
+def load_chars(home_: str) -> list[dict[str, Any]]:
+    """读取 `data/character.json`（不存在时返回空列表）。"""
     with open(storage.char_index_path(home_), encoding="utf-8") as f:
         data = json.load(f)
-    return [c["id"] for c in data if c.get("id")]
+    return [c for c in data if isinstance(c, dict)]
 
 
 def parse_char_ids(tokens: list[str], all_ids: list[str], *, warn_missing: bool = False) -> list[str]:

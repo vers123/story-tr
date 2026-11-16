@@ -103,6 +103,23 @@ def providers_of(steps: list[models.TranslationStep]) -> list[str]:
     return seen
 
 
+def batch_translator(
+    translators: list[transport.Translator], providers: list[str], balance: bool
+) -> tuple[str, transport.Translator] | None:
+    """按后端顺序选择第一个「可用且支持批量」的后端；没有则返回 `None`。"""
+    for name, translator in order(translators, providers, balance):
+        if not getattr(translator, "supports_batch", False):
+            continue
+        method = getattr(translator, "translate_batch", None)
+        if not callable(method):
+            continue
+        ok, _reason = translator.available()
+        if not ok:
+            continue
+        return name, translator
+    return None
+
+
 def translate_step(
     text: str,
     src: str,

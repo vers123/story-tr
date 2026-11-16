@@ -58,7 +58,12 @@ def translate_cmd(
     overwrite: bool = typer.Option(False, "--overwrite", help="覆盖已有结果"),
     reset: bool = typer.Option(False, "--reset", help="重置批次状态并忽略签名不一致"),
     revalidate: bool = typer.Option(False, "--revalidate", help="源文变化时重新翻译"),
-    no_cache: bool = typer.Option(False, "--no-cache", help="不使用已有结果缓存"),
+    no_cache: bool = typer.Option(False, "--no-cache", help="忽略状态 completed 记录（仍按磁盘结果判断）"),
+    result_tag: str | None = typer.Option(None, "--result-tag", help="结果目录标签（写入 result-<tag>/）"),
+    batch: bool = typer.Option(True, "--batch/--no-batch", help="同一故事按步骤批量请求（默认开）"),
+    plan: bool = typer.Option(False, "--plan", help="只读估算任务量与请求数，不执行翻译"),
+    reconcile: bool = typer.Option(False, "--reconcile", help="按磁盘已有结果对账批次状态"),
+    retry_rounds: int = typer.Option(5, "--retry-rounds", help="失败自动重试轮数（0 关闭）"),
     fail_fast: bool = typer.Option(False, "--fail-fast", help="首个失败即中止"),
     max_failures: int = typer.Option(20, "--max-failures", help="失败任务上限"),
     no_tts: bool = typer.Option(False, "--no-tts", help="不生成语音"),
@@ -69,29 +74,12 @@ def translate_cmd(
     """批量翻译角色故事（「来回翻译 N 次」链路）。"""
     if tts_only and no_tts:
         raise typer.BadParameter("--tts-only 与 --no-tts 互斥，只能二选一。")
-    rc = _run_with_cancel(
-        ctx,
-        threading.Event(),
-        char_ids=list(char_ids or []),
-        all_characters=all_characters,
-        stories=stories,
-        mode=mode,
-        chain=chain,
-        languages=languages,
-        steps=steps,
-        provider=provider_arg(provider),
-        workers=workers,
-        min_interval=min_interval,
-        balance=balance,
-        full_only=full_only,
-        segments_only=segments_only,
-        overwrite=overwrite,
-        reset=reset,
-        revalidate=revalidate,
-        no_cache=no_cache,
-        fail_fast=fail_fast,
-        max_failures=max_failures,
-        no_tts=no_tts,
-        tts_only=tts_only,
-    )
+    # 透传全部选项（locals 快照不含随后才创建的名字）
+    options: dict[str, Any] = {k: v for k, v in locals().items() if k != "ctx"}
+    options["char_ids"] = list(char_ids or [])
+    options["provider"] = provider_arg(provider)
+    options["plan_only"] = options.pop("plan")
+    if options["plan_only"]:
+        raise typer.Exit(int(translate_svc.run(**options)))
+    rc = _run_with_cancel(ctx, threading.Event(), **options)
     raise typer.Exit(int(rc))

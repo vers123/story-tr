@@ -17,6 +17,7 @@ from story_tr import models
 from story_tr.errors import ExitCode
 
 from . import storage, story_inputs
+from .translate import failures as failures_mod
 
 log = logging.getLogger("story_tr.services.clean")
 
@@ -24,8 +25,8 @@ STATE_FILENAME = ".translate_stories_state.json"
 PROTECTED = {"video"}
 
 
-def _targets(home_: str, cid: str, names: list[str] | None) -> list[str]:
-    base = storage.result_dir(home_, cid)
+def _targets(home_: str, cid: str, names: list[str] | None, result_tag: str | None = None) -> list[str]:
+    base = storage.result_dir(home_, cid, result_tag)
     if not os.path.isdir(base):
         return []
     if names:
@@ -67,11 +68,20 @@ def _state_key_match(key: str, ids: set[str], names: list[str] | None) -> bool:
     return not names or parts[1] in names
 
 
-def _clean_state(home_: str, char_ids: list[str], names: list[str] | None, dry_run: bool = False) -> int:
+def _clean_state(
+    home_: str,
+    char_ids: list[str],
+    names: list[str] | None,
+    result_tag: str | None = None,
+    dry_run: bool = False,
+) -> int:
     state_path = os.path.join(home_, STATE_FILENAME)
     raw = storage.load_json_with_backup(state_path)
     state = models.BatchState.model_validate(raw) if raw else None
     if not state or not state.completed:
+        return 0
+    if (state.signature or {}).get("result_tag") != result_tag:
+        log.info("批次状态属于其他结果标签，本次不修改状态记录（可用 --reset 重置签名）。")
         return 0
     ids = set(char_ids)
     hits = [k for k in state.completed if _state_key_match(k, ids, names)]
@@ -112,13 +122,13 @@ def _select(
 
 
 def _build_plan(
-    home_: str, selected: list[str], names: list[str] | None
+    home_: str, selected: list[str], names: list[str] | None, result_tag: str | None = None
 ) -> tuple[list[tuple[str, list[str], int, int]], int, int]:
     """生成 `(角色, 目标路径, 文件数, 字节数)` 计划与合计。"""
     plan: list[tuple[str, list[str], int, int]] = []
     total_n = total_size = 0
     for cid in selected:
-        ts = _targets(home_, cid, names)
+        ts = _targets(home_, cid, names, result_tag)
         if not ts:
             continue
         n, size = _measure(ts)
@@ -152,6 +162,35 @@ def _report(
     )
 
 
+def _clean_failures(
+    home_: str,
+    char_ids: list[str],
+    names: list[str] | None,
+    result_tag: str | None,
+    dry_run: bool = False,
+) -> int:
+    """清理选中角色/故事的失败登记（tag 一致时才动），返回移除条数。"""
+    registry = failures_mod.load_registry(home_)
+    if not registry or not registry.failures:
+        return 0
+    if (registry.result_tag or None) != result_tag:
+        return 0
+    ids = set(char_ids)
+    hits = [
+        record
+        for record in registry.failures
+        if record.char_id in ids and (not names or record.story in names)
+    ]
+    if hits and not dry_run:
+        dropped = {(r.char_id, r.story, r.key) for r in hits}
+        registry.failures = [r for r in registry.failures if (r.char_id, r.story, r.key) not in dropped]
+        if registry.failures:
+            failures_mod.save_registry(home_, registry)
+        else:
+            failures_mod.remove_registry(home_)
+    return len(hits)
+
+
 def _confirmed(yes: bool) -> bool:
     """交互确认；`yes` 为真时直接通过。"""
     if yes:
@@ -174,21 +213,30 @@ def run(
     yes: bool = False,
     keep_state: bool = False,
     data_dir: str | None = None,
+    result_tag: str | None = None,
 ) -> ExitCode:
-    """清理 `result/` 内容（保留目录本身），返回 `ExitCode`。"""
+    """清理 `result[-tag]/` 内容（保留目录本身），返回 `ExitCode`。"""
+    try:
+        result_tag = storage.validate_result_tag(result_tag)
+    except ValueError as exc:
+        log.error(str(exc))
+        return ExitCode.USAGE
     home_ = storage.home(data_dir)
     selected, code = _select(home_, char_ids, all_characters)
     if code is not None or selected is None:
         return code or ExitCode.USAGE
     names = [s.strip() for s in stories.split(",") if s.strip()] or None
 
-    plan, total_n, total_size = _build_plan(home_, selected, names)
-    state_hits = _clean_state(home_, selected, names, dry_run=True)
-    if not plan and not state_hits:
+    plan, total_n, total_size = _build_plan(home_, selected, names, result_tag)
+    state_hits = _clean_state(home_, selected, names, result_tag, dry_run=True)
+    failure_hits = _clean_failures(home_, selected, names, result_tag, dry_run=True)
+    if not plan and not state_hits and not failure_hits:
         log.info("没有可清理的翻译结果。")
         return ExitCode.OK
 
     _report(plan, total_n, total_size, state_hits, keep_state)
+    if failure_hits:
+        log.info("失败登记：%s %d 条", "将移除" if not dry_run else "可移除", failure_hits)
     if dry_run:
         log.info("--dry-run：未做任何删除。")
         return ExitCode.OK
@@ -197,8 +245,9 @@ def run(
 
     for _, ts, _, _ in plan:
         _remove(ts)
-    log.info("已清理 %d 个角色的 result/ 内容（result/ 目录本身保留）。", len(plan))
+    log.info("已清理 %d 个角色的结果目录内容（目录本身保留）。", len(plan))
     if not keep_state:
-        hits = _clean_state(home_, selected, names)
+        hits = _clean_state(home_, selected, names, result_tag)
         log.info("状态记录：移除 %d 条，并重置批次签名。", hits)
+    log.info("失败登记：移除 %d 条。", _clean_failures(home_, selected, names, result_tag))
     return ExitCode.OK

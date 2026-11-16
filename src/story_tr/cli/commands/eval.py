@@ -15,6 +15,7 @@ def eval_cmd(
     out: str | None = typer.Option(None, "--out", help="报告输出目录"),
     rwkv_url: str | None = typer.Option(None, "--rwkv-url", help="覆盖本地 RWKV 服务地址"),
     rwkv_template: str | None = typer.Option(None, "--rwkv-template", help="覆盖 RWKV 提示词模板"),
+    result_tag: str | None = typer.Option(None, "--result-tag", help="用指定结果标签目录做基线"),
 ) -> None:
     """简化版本地评测：用多套模板采样生成并排名。"""
     rc = eval_svc.run(
@@ -27,5 +28,6 @@ def eval_cmd(
         rwkv_url=rwkv_url,
         rwkv_template=rwkv_template,
         data_dir=ctx.obj["data_dir"],
+        result_tag=result_tag,
     )
     raise typer.Exit(int(rc))

@@ -8,6 +8,7 @@ from .chain import chain_cmd
 from .clean import clean_cmd
 from .doctor import doctor_cmd
 from .eval import eval_cmd
+from .export import export_cmd
 from .fetch import fetch_cmd
 from .folders import folders_cmd
 from .status import status_cmd
@@ -22,6 +23,7 @@ COMMANDS = (
     ("status", status_cmd),
     ("doctor", doctor_cmd),
     ("eval", eval_cmd),
+    ("export", export_cmd),
 )
 
 

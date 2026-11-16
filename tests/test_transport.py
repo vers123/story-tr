@@ -646,3 +646,48 @@ def test_tts_http_error(monkeypatch):
     _install_client(monkeypatch, client)
     with pytest.raises(ConnectionFailed):
         tts.tts_bytes("你好", "zh-CN")
+
+
+def test_google_batch_dict_ok(monkeypatch):
+    def handler(url, **kw):
+        return FakeResponse(payload=["你好", "世界"])
+
+    client = FakeClient(get=handler)
+    _install_client(monkeypatch, client)
+    t = google.GoogleTranslator(_settings())
+    assert t.translate_batch(["a", "b"], "zh-CN", "ja") == ["你好", "世界"]
+    qs = [v for k, v in client.get_calls[0][1]["params"] if k == "q"]
+    assert qs == ["a", "b"]
+
+
+def test_google_batch_single_uses_single_path(monkeypatch):
+    client = FakeClient(get=lambda url, **kw: FakeResponse(payload=[["你好"]]))
+    _install_client(monkeypatch, client)
+    t = google.GoogleTranslator(_settings())
+    assert t.translate_batch(["a"], "zh-CN", "ja") == ["你好"]
+
+
+def test_google_batch_shape_mismatch(monkeypatch):
+    client = FakeClient(get=lambda url, **kw: FakeResponse(payload=["你好"]))
+    _install_client(monkeypatch, client)
+    t = google.GoogleTranslator(_settings())
+    with pytest.raises(BadOutput):
+        t.translate_batch(["a", "b"], "zh-CN", "ja")
+
+
+def test_google_batch_api_ok(monkeypatch):
+    payload = {"data": {"translations": [{"translatedText": "bonjour"}, {"translatedText": "monde"}]}}
+    client = FakeClient(post=lambda url, **kw: FakeResponse(payload=payload))
+    _install_client(monkeypatch, client)
+    t = google.GoogleTranslator(_settings(google_api_key="k"))
+    assert t.translate_batch(["hello", "world"], "en", "fr") == ["bonjour", "monde"]
+    assert client.post_calls
+
+
+def test_google_batch_api_shape_mismatch(monkeypatch):
+    payload = {"data": {"translations": [{"translatedText": "bonjour"}]}}
+    client = FakeClient(post=lambda url, **kw: FakeResponse(payload=payload))
+    _install_client(monkeypatch, client)
+    t = google.GoogleTranslator(_settings(google_api_key="k"))
+    with pytest.raises(BadOutput):
+        t.translate_batch(["hello", "world"], "en", "fr")

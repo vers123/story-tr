@@ -15,7 +15,7 @@ from typing import Any
 
 from story_tr.errors import ExitCode
 
-from . import chain_runner, runner, summary, tasks, tts
+from . import chain_runner, estimate, runner, summary, tasks, tts
 from . import tts_only as tts_only_mod
 from .runner import STATE_FILENAME, Plan
 
@@ -24,6 +24,37 @@ TTS_ATTEMPTS = tts.TTS_ATTEMPTS
 TTS_BACKOFF = tts.TTS_BACKOFF
 SAVE_EVERY = runner.SAVE_EVERY
 SAVE_INTERVAL = runner.SAVE_INTERVAL
+
+# `runner.build_plan` 的关键字参数与 `run()` 的同名形参一一对应
+_BUILD_KEYS = (
+    "char_ids",
+    "all_characters",
+    "stories",
+    "mode",
+    "chain",
+    "languages",
+    "steps",
+    "provider",
+    "workers",
+    "min_interval",
+    "balance",
+    "full_only",
+    "segments_only",
+    "overwrite",
+    "reset",
+    "revalidate",
+    "fail_fast",
+    "max_failures",
+    "no_tts",
+    "tts_only",
+    "data_dir",
+    "on_progress",
+    "no_cache",
+    "result_tag",
+    "batch",
+    "reconcile",
+    "retry_rounds",
+)
 
 log = logging.getLogger("story_tr.services.translate")
 
@@ -63,6 +94,11 @@ def run(
     reset: bool = False,
     revalidate: bool = False,
     no_cache: bool = False,
+    result_tag: str | None = None,
+    batch: bool = True,
+    reconcile: bool = False,
+    retry_rounds: int = 5,
+    plan_only: bool = False,
     fail_fast: bool = False,
     max_failures: int = 20,
     no_tts: bool = False,
@@ -72,32 +108,15 @@ def run(
     cancel: Any = None,
 ) -> ExitCode:
     """批量翻译入口，返回 `ExitCode`。"""
-    plan, code = runner.build_plan(
-        char_ids=char_ids,
-        all_characters=all_characters,
-        stories=stories,
-        mode=mode,
-        chain=chain,
-        languages=languages,
-        steps=steps,
-        provider=provider,
-        workers=workers,
-        min_interval=min_interval,
-        balance=balance,
-        full_only=full_only,
-        segments_only=segments_only,
-        overwrite=overwrite,
-        reset=reset,
-        revalidate=revalidate,
-        fail_fast=fail_fast,
-        max_failures=max_failures,
-        no_tts=no_tts,
-        tts_only=tts_only,
-        data_dir=data_dir,
-        on_progress=on_progress,
-    )
+    options = {k: v for k, v in locals().items() if k in _BUILD_KEYS}
+    plan, code = runner.build_plan(**options)
     if code is not None or plan is None:
         return code or ExitCode.USAGE
+    if plan_only:
+        if reconcile:
+            log.warning("--plan 为只读模式，忽略 --reconcile。")
+        print(estimate.render(estimate.estimate(plan, tts_only=tts_only)))
+        return ExitCode.OK
     if tts_only:
         return tts_only_mod.run_tts_only(plan, cancel)
     return runner.run_batch(plan, cancel)

@@ -21,9 +21,15 @@
 - 连接类失败（超时 / DNS / 5xx）立即切换下一后端；限流（429 等）与业务失败按各后端策略处理；全部后端失败退出码 `5`。
 - 代理：经 `HTTPS_PROXY` / `HTTP_PROXY` 环境变量（或 `.env`）生效。
 
+## 批量请求（`translate --batch`，默认开启）
+
+- 只有 `google` 支持真正的批量：免 key 通道用重复 `q`，官方 v2 用 `q` 数组；单包总字符 ≤1500（实测 1800 仍可用、1850 起 400）。
+- 其他后端（bing / baidu / rwkv）在批量模式下自动回退逐条；批量请求失败也会回退逐条，保证结果正确性。
+- 批量模式下 `--workers` 不生效（按故事串行），可用 `--no-batch` 恢复逐条并发。
+
 ## TTS
 
-TTS 用 `httpx` 直连 Google TTS 端点（`translate.google.com/translate_tts`）生成 mp3，不再依赖 gTTS；`--no-tts` 可关闭；连接失败自动重试 3 次，仍失败时记录到 `logs/tts_failures_<时间戳>.json`，可用 `translate <id> --tts-only` 补生成。
+TTS 用 `httpx` 直连 Google TTS 端点（`translate.google.com/translate_tts`）生成 mp3，不再依赖 gTTS；`--no-tts` 可关闭；连接失败自动重试 3 次，仍失败时计入 `.translate_failures_state.json` 并进入 `translate` 的自动重试轮，可用 `translate <id> --tts-only` 单独补生成。
 
 ## 本地 RWKV
 

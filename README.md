@@ -2,7 +2,7 @@
 
 原神角色故事双语（中 / 英）文本抓取 + 「来回翻译 N 次」链路工具。
 
-![version](https://img.shields.io/badge/version-2.0.0-blue)
+![version](https://img.shields.io/badge/version-2.1.0-blue)
 ![python](https://img.shields.io/badge/python-3.10%20%7C%203.14-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![CI](https://img.shields.io/github/actions/workflow/status/vers123/story-tr/ci.yml?branch=main&label=CI)
@@ -42,6 +42,7 @@ story-tr translate 10000021 # 2) 来回翻译 N 次 → result/
 | `story-tr status` | 只读报告数据覆盖 / 结果数量 / 进度 | [docs/usage.md](docs/usage.md#story-tr-status) |
 | `story-tr doctor` | 只读检查运行环境与配置 | [docs/usage.md](docs/usage.md#story-tr-doctor) |
 | `story-tr eval` | 采样段落评测本地 RWKV 模板质量 | [docs/rwkv.md](docs/rwkv.md#eval-评测) |
+| `story-tr export` | 导出结果数据集（JSONL / Parquet + manifest） | [docs/usage.md](docs/usage.md#story-tr-export) |
 
 > 所有命令都支持全局参数 `--data-dir <目录>`；`-v` / `-q` 控制日志详略。退出码含义见 [docs/usage.md](docs/usage.md#退出码)。
 
@@ -50,7 +51,7 @@ story-tr translate 10000021 # 2) 来回翻译 N 次 → result/
 | 文档 | 内容 |
 | --- | --- |
 | [docs/README.md](docs/README.md) | 文档索引与推荐阅读顺序 |
-| [docs/usage.md](docs/usage.md) | 安装、快速开始、8 个子命令与参数表、退出码 |
+| [docs/usage.md](docs/usage.md) | 安装、快速开始、9 个子命令与参数表、退出码 |
 | [docs/architecture.md](docs/architecture.md) | 五层架构、模块拆分、结构守护、目录树 |
 | [docs/data-contract.md](docs/data-contract.md) | `data/` 结构与各 JSON / Markdown 字段契约 |
 | [docs/backends.md](docs/backends.md) | 翻译后端、回退策略、代理与 TTS |

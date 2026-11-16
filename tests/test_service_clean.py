@@ -133,3 +133,74 @@ def test_clean_cancel_on_eof_and_nothing_to_do(tmp_path, monkeypatch):
     monkeypatch.setattr("builtins.input", boom)
     assert clean_mod.run(["10000021"], data_dir=str(tmp_path)) == ExitCode.OK
     assert (rdir / "seg_01.json").exists()
+
+
+def test_clean_tagged_only_removes_tagged(tmp_path):
+    _setup_workspace(tmp_path)
+    char_dir = tmp_path / "data" / "story" / "character" / "10000021"
+    legacy = char_dir / "result" / "vision"
+    tagged = char_dir / "result-cloud" / "vision"
+    for d in (legacy, tagged):
+        d.mkdir(parents=True)
+        (d / "seg_01.json").write_text("{}", encoding="utf-8")
+
+    rc = clean_mod.run(["10000021"], result_tag="cloud", yes=True, data_dir=str(tmp_path))
+    assert rc == ExitCode.OK
+    assert (legacy / "seg_01.json").exists()
+    assert not (tagged / "seg_01.json").exists()
+
+
+def test_clean_invalid_result_tag(tmp_path):
+    _setup_workspace(tmp_path)
+    assert clean_mod.run(["10000021"], result_tag="a/b", data_dir=str(tmp_path)) == ExitCode.USAGE
+
+
+def test_clean_tagged_keeps_other_signature_state(tmp_path):
+    _setup_workspace(tmp_path)
+    tagged = tmp_path / "data" / "story" / "character" / "10000021" / "result-cloud" / "vision"
+    tagged.mkdir(parents=True)
+    (tagged / "seg_01.json").write_text("{}", encoding="utf-8")
+    state = models.BatchState(
+        signature={"mode": "fixed"}, completed=["10000021|vision|seg_01"], started_at="2026-01-01T00:00:00"
+    )
+    storage.atomic_write_json(str(tmp_path / clean_mod.STATE_FILENAME), state)
+
+    assert clean_mod.run(["10000021"], result_tag="cloud", yes=True, data_dir=str(tmp_path)) == ExitCode.OK
+    raw = storage.load_json_with_backup(str(tmp_path / clean_mod.STATE_FILENAME))
+    assert raw["completed"] == ["10000021|vision|seg_01"]
+
+
+def test_clean_removes_failure_records(tmp_path):
+    from story_tr.services.translate import failures as failures_mod
+
+    _setup_workspace(tmp_path)
+    rdir = tmp_path / "data" / "story" / "character" / "10000021" / "result" / "vision"
+    rdir.mkdir(parents=True)
+    (rdir / "seg_01.json").write_text("{}", encoding="utf-8")
+    record = models.FailureRecord(
+        char_id="10000021",
+        story="vision",
+        key="seg_01",
+        stage="translate",
+        error="BadOutput: x",
+        first_at="t",
+        last_at="t",
+    )
+    other = models.FailureRecord(
+        char_id="999",
+        story="vision",
+        key="seg_01",
+        stage="translate",
+        error="BadOutput: x",
+        first_at="t",
+        last_at="t",
+    )
+    failures_mod.save_registry(
+        str(tmp_path),
+        models.FailureRegistry(signature={}, started_at="t", failures=[record, other]),
+    )
+
+    assert clean_mod.run(["10000021"], yes=True, data_dir=str(tmp_path)) == ExitCode.OK
+    registry = failures_mod.read_registry(str(tmp_path))
+    assert registry is not None
+    assert [r.char_id for r in registry.failures] == ["999"]

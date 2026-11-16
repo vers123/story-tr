@@ -1,12 +1,12 @@
 # story-tr 文档
 
-`story-tr` 是「原神角色故事双语（中 / 英）文本抓取 + 来回翻译 N 次」链路工具，当前版本 **v2.0.0**。根目录 [README](../README.md) 是项目入口与 5 分钟上手，本目录收纳全部细化文档。
+`story-tr` 是「原神角色故事双语（中 / 英）文本抓取 + 来回翻译 N 次」链路工具，当前版本 **v2.1.0**。根目录 [README](../README.md) 是项目入口与 5 分钟上手，本目录收纳全部细化文档。
 
 ## 文档索引
 
 | 文档 | 一句话说明 | 适合 |
 | --- | --- | --- |
-| [usage.md](usage.md) | 安装、快速开始、8 个子命令与参数表、退出码 | 只想把命令跑起来 |
+| [usage.md](usage.md) | 安装、快速开始、9 个子命令与参数表、退出码 | 只想把命令跑起来 |
 | [architecture.md](architecture.md) | 五层架构、`services` / `cli` 内部拆分、结构守护与目录树 | 要读或改代码 |
 | [data-contract.md](data-contract.md) | `data/` 目录结构、各 JSON / Markdown 字段契约、状态文件 | 要消费数据或写周边工具 |
 | [backends.md](backends.md) | 翻译后端（google / bing / baidu / rwkv）、错误分类、代理与 TTS | 配置后端或排查网络问题 |

@@ -10,11 +10,14 @@ from typing import Any
 from .. import storage
 
 
-def write_failures(home_: str, failures: list[dict[str, Any]], prefix: str = "failures") -> str:
-    """把失败清单写入 `logs/{prefix}_{ts}.json` 并返回路径。"""
+def write_failures(
+    home_: str, failures: list[dict[str, Any]], prefix: str = "failures", suffix: str = ""
+) -> str:
+    """把失败清单写入 `logs/{prefix}_{ts}{suffix}.json` 并返回路径。"""
     os.makedirs(storage.logs_dir(home_), exist_ok=True)
     path = os.path.join(
-        storage.logs_dir(home_), "{}_{}.json".format(prefix, datetime.now().strftime("%Y%m%d_%H%M%S"))
+        storage.logs_dir(home_),
+        "{}_{}{}.json".format(prefix, datetime.now().strftime("%Y%m%d_%H%M%S"), suffix),
     )
     storage.atomic_write_json(path, failures)
     return path
@@ -52,10 +55,16 @@ def _segment_entry(d: str, name: str) -> dict[str, Any]:
 
 
 def write_summary(
-    home_: str, cid: str, story: str, provider_label: str, mode_label: str, src_file: str = "zh.md"
+    home_: str,
+    cid: str,
+    story: str,
+    provider_label: str,
+    mode_label: str,
+    src_file: str = "zh.md",
+    result_tag: str | None = None,
 ) -> None:
     """重建单个故事的 `segments.json` 汇总。"""
-    d = os.path.join(storage.result_dir(home_, cid), story)
+    d = os.path.join(storage.result_dir(home_, cid, result_tag), story)
     if not os.path.isdir(d):
         return
     summary: dict[str, Any] = {

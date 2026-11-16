@@ -3,6 +3,8 @@
 import json
 import threading
 
+import pytest
+
 from story_tr import models
 from story_tr.config import Settings
 from story_tr.errors import (
@@ -20,6 +22,7 @@ from story_tr.services.translate import (
 from story_tr.services.translate import tts as translate_tts
 from tests.support import (
     FakeTranslator,
+    ProbeTranslator,
 )
 from tests.support import (
     mock_translator as _mock_translator,
@@ -27,6 +30,12 @@ from tests.support import (
 from tests.support import (
     setup_workspace as _setup_workspace,
 )
+
+
+@pytest.fixture(autouse=True)
+def _fast_backoff(monkeypatch):
+    """重试退避在测试中不真实等待。"""
+    monkeypatch.setattr("story_tr.services.translate.retry.BACKOFF_BASE", 0.0)
 
 
 def test_translate_writes_result(tmp_path, monkeypatch):
@@ -89,8 +98,16 @@ def test_translate_local_connection_failure(tmp_path, monkeypatch):
     _setup_workspace(tmp_path)
     fake = FakeTranslator(name="rwkv", error=ConnectionFailed("connection refused"))
     _mock_translator(monkeypatch, fake)
-    rc = translate.run(["10000021"], stories="vision", mode="rwkv20", no_tts=True, data_dir=str(tmp_path))
-    assert rc == ExitCode.CONNECTION
+    rc = translate.run(
+        ["10000021"],
+        stories="vision",
+        mode="rwkv20",
+        no_tts=True,
+        retry_rounds=0,
+        data_dir=str(tmp_path),
+    )
+    assert rc == ExitCode.PARTIAL
+    assert (tmp_path / ".translate_failures_state.json").exists()
 
 
 def test_translate_model_not_loaded(tmp_path, monkeypatch):
@@ -177,19 +194,31 @@ def test_translate_partial_failures(tmp_path, monkeypatch):
     _setup_workspace(tmp_path)
     _mock_translator(monkeypatch, FakeTranslator(name="google", error=BadOutput("bad")))
     rc = translate.run(
-        ["10000021"], stories="vision", mode="fixed", chain="asia", no_tts=True, data_dir=str(tmp_path)
+        ["10000021"],
+        stories="vision",
+        mode="fixed",
+        chain="asia",
+        no_tts=True,
+        retry_rounds=0,
+        data_dir=str(tmp_path),
     )
     assert rc == ExitCode.PARTIAL
     assert list((tmp_path / "logs").glob("failures_*.json"))
 
 
-def test_translate_rate_limited_pauses(tmp_path, monkeypatch):
+def test_translate_rate_limited_becomes_failure(tmp_path, monkeypatch):
     _setup_workspace(tmp_path)
     _mock_translator(monkeypatch, FakeTranslator(name="google", error=RateLimited("limited")))
     rc = translate.run(
-        ["10000021"], stories="vision", mode="fixed", chain="asia", no_tts=True, data_dir=str(tmp_path)
+        ["10000021"],
+        stories="vision",
+        mode="fixed",
+        chain="asia",
+        no_tts=True,
+        retry_rounds=0,
+        data_dir=str(tmp_path),
     )
-    assert rc == ExitCode.PAUSED
+    assert rc == ExitCode.PARTIAL
 
 
 def test_translate_fail_fast(tmp_path, monkeypatch):
@@ -202,6 +231,7 @@ def test_translate_fail_fast(tmp_path, monkeypatch):
         chain="asia",
         no_tts=True,
         fail_fast=True,
+        retry_rounds=0,
         data_dir=str(tmp_path),
     )
     assert rc == ExitCode.PARTIAL
@@ -217,6 +247,7 @@ def test_translate_max_failures(tmp_path, monkeypatch):
         chain="asia",
         no_tts=True,
         max_failures=1,
+        retry_rounds=0,
         data_dir=str(tmp_path),
     )
     assert rc == ExitCode.PARTIAL
@@ -295,9 +326,16 @@ def test_translate_tts_failure_is_logged(tmp_path, monkeypatch):
 
     monkeypatch.setattr(translate_tts, "tts_bytes", boom)
     monkeypatch.setattr(translate_tts, "TTS_BACKOFF", 0.0)
-    rc = translate.run(["10000021"], stories="vision", mode="fixed", chain="asia", data_dir=str(tmp_path))
-    # 语音失败不影响翻译结果
-    assert rc == ExitCode.OK
+    rc = translate.run(
+        ["10000021"],
+        stories="vision",
+        mode="fixed",
+        chain="asia",
+        retry_rounds=0,
+        data_dir=str(tmp_path),
+    )
+    # 语音失败不影响翻译结果，但任务计入失败并返回 PARTIAL
+    assert rc == ExitCode.PARTIAL
     rdir = tmp_path / "data" / "story" / "character" / "10000021" / "result" / "vision"
     assert (rdir / "seg_01.json").exists()
     assert not (rdir / "seg_01.mp3").exists()
@@ -306,9 +344,7 @@ def test_translate_tts_failure_is_logged(tmp_path, monkeypatch):
     rows = json.loads(logs[0].read_text(encoding="utf-8"))
     assert len(rows) == 4
     assert {r["stage"] for r in rows} == {"tts"}
-    summary = json.loads((rdir / "segments.json").read_text(encoding="utf-8"))
-    assert summary["segments"][0]["mp3"] is None
-    assert summary["title"]["mp3"] is None
+    assert (tmp_path / ".translate_failures_state.json").exists()
 
 
 def test_tts_only_fills_missing_and_refreshes_summary(tmp_path, monkeypatch):
@@ -360,10 +396,11 @@ def test_tts_only_records_failure(tmp_path, monkeypatch):
 
     monkeypatch.setattr(translate_tts, "tts_bytes", boom)
     monkeypatch.setattr(translate_tts, "TTS_BACKOFF", 0.0)
-    assert translate.run(["10000021"], tts_only=True, **args) == ExitCode.PARTIAL
+    assert translate.run(["10000021"], tts_only=True, retry_rounds=0, **args) == ExitCode.PARTIAL
     logs = list((tmp_path / "logs").glob("tts_failures_*.json"))
     assert len(logs) == 1
     assert len(json.loads(logs[0].read_text(encoding="utf-8"))) == 4
+    assert (tmp_path / ".translate_failures_state.json").exists()
 
 
 def test_tts_only_requires_existing_results(tmp_path, monkeypatch):
@@ -488,3 +525,262 @@ def test_translate_revalidate_overrides_completed_state(tmp_path, monkeypatch):
     assert fake.calls == 4 * 22
     row = json.loads((rdir / "seg_01.json").read_text(encoding="utf-8"))
     assert row["source"] == "第一段"
+
+
+def test_translate_no_cache_retranslates_missing_file(tmp_path, monkeypatch):
+    """--no-cache：忽略 state.completed 记录，文件缺失的任务会被重译。"""
+    _setup_workspace(tmp_path)
+    fake = FakeTranslator(name="google", result="译文")
+    _mock_translator(monkeypatch, fake)
+    args = dict(stories="vision", mode="fixed", chain="asia", no_tts=True, data_dir=str(tmp_path))
+    assert translate.run(["10000021"], **args) == ExitCode.OK
+    first = fake.calls
+    rdir = tmp_path / "data" / "story" / "character" / "10000021" / "result" / "vision"
+    (rdir / "seg_01.json").unlink()
+    # 造一个「中断遗留」的批次状态：seg_01 记为完成，但文件已被删
+    plan, _ = runner.build_plan(
+        char_ids=["10000021"],
+        all_characters=False,
+        stories="vision",
+        mode="fixed",
+        chain="asia",
+        languages="",
+        steps=20,
+        provider=None,
+        workers=1,
+        min_interval=0.0,
+        balance=False,
+        full_only=False,
+        segments_only=False,
+        overwrite=False,
+        reset=False,
+        revalidate=False,
+        fail_fast=False,
+        max_failures=20,
+        no_tts=True,
+        tts_only=False,
+        data_dir=str(tmp_path),
+        on_progress=None,
+    )
+    assert plan is not None
+    state = models.BatchState(
+        signature=runner.plan_signature(plan),
+        completed=["10000021|vision|seg_01"],
+        started_at="2026-01-01T00:00:00",
+    )
+
+    def write_state():
+        storage.atomic_write_json(str(tmp_path / translate.STATE_FILENAME), state)
+
+    # 默认：state 里仍记为完成 → 不重译（成功后状态文件会被删除，需再写一次）
+    write_state()
+    assert translate.run(["10000021"], **args) == ExitCode.OK
+    assert fake.calls == first
+    # --no-cache：忽略 state → 只重译缺失的 seg_01（22 步）
+    write_state()
+    assert translate.run(["10000021"], no_cache=True, **args) == ExitCode.OK
+    assert fake.calls == first + 22
+
+
+def test_translate_no_cache_still_skips_existing_files(tmp_path, monkeypatch):
+    """--no-cache 只绕过状态记录，仍然按磁盘文件跳过已有结果。"""
+    _setup_workspace(tmp_path)
+    fake = FakeTranslator(name="google", result="译文")
+    _mock_translator(monkeypatch, fake)
+    args = dict(stories="vision", mode="fixed", chain="asia", no_tts=True, data_dir=str(tmp_path))
+    assert translate.run(["10000021"], **args) == ExitCode.OK
+    first = fake.calls
+    assert translate.run(["10000021"], no_cache=True, **args) == ExitCode.OK
+    assert fake.calls == first
+
+
+def test_translate_preflight_unreachable_returns_connection(tmp_path, monkeypatch):
+    _setup_workspace(tmp_path)
+    fake = ProbeTranslator(name="rwkv", probe={"reachable": False, "error": "down"})
+    _mock_translator(monkeypatch, fake)
+    rc = translate.run(["10000021"], stories="vision", mode="rwkv20", no_tts=True, data_dir=str(tmp_path))
+    assert rc == ExitCode.CONNECTION
+    assert fake.calls == 0
+
+
+def test_translate_preflight_offline_returns_paused(tmp_path, monkeypatch):
+    _setup_workspace(tmp_path)
+    fake = ProbeTranslator(name="rwkv", probe={"reachable": True, "status": "Offline"})
+    _mock_translator(monkeypatch, fake)
+    rc = translate.run(["10000021"], stories="vision", mode="rwkv20", no_tts=True, data_dir=str(tmp_path))
+    assert rc == ExitCode.PAUSED
+    assert fake.calls == 0
+
+
+def test_translate_preflight_working_proceeds(tmp_path, monkeypatch):
+    _setup_workspace(tmp_path)
+    fake = ProbeTranslator(name="rwkv", result="这是译文")
+    _mock_translator(monkeypatch, fake)
+    rc = translate.run(["10000021"], stories="vision", mode="rwkv20", no_tts=True, data_dir=str(tmp_path))
+    assert rc == ExitCode.OK
+    assert fake.calls > 0
+
+
+def test_translate_preflight_loading_proceeds(tmp_path, monkeypatch):
+    _setup_workspace(tmp_path)
+    fake = ProbeTranslator(name="rwkv", result="这是译文", probe={"reachable": True, "status": "Loading"})
+    _mock_translator(monkeypatch, fake)
+    rc = translate.run(["10000021"], stories="vision", mode="rwkv20", no_tts=True, data_dir=str(tmp_path))
+    assert rc == ExitCode.OK
+    assert fake.calls > 0
+
+
+def test_translate_invalid_result_tag(tmp_path):
+    _setup_workspace(tmp_path)
+    assert translate.run(["10000021"], result_tag="a/b", data_dir=str(tmp_path)) == ExitCode.USAGE
+
+
+def test_translate_writes_result_tag_dir(tmp_path, monkeypatch):
+    _setup_workspace(tmp_path)
+    fake = FakeTranslator(name="google", result="译文")
+    _mock_translator(monkeypatch, fake)
+    rc = translate.run(
+        ["10000021"],
+        stories="vision",
+        mode="fixed",
+        chain="asia",
+        no_tts=True,
+        result_tag="cloud",
+        data_dir=str(tmp_path),
+    )
+    assert rc == ExitCode.OK
+    char_dir = tmp_path / "data" / "story" / "character" / "10000021"
+    assert (char_dir / "result-cloud" / "vision" / "seg_01.json").exists()
+    assert (char_dir / "result-cloud" / "vision" / "segments.json").exists()
+    assert not (char_dir / "result").exists()
+
+
+def test_translate_result_tag_change_requires_reset(tmp_path, monkeypatch):
+    _setup_workspace(tmp_path)
+    fake = FakeTranslator(name="google", result="译文")
+    _mock_translator(monkeypatch, fake)
+    plan, _ = runner.build_plan(
+        char_ids=["10000021"],
+        all_characters=False,
+        stories="vision",
+        mode="fixed",
+        chain="asia",
+        languages="",
+        steps=20,
+        provider=None,
+        workers=1,
+        min_interval=0.0,
+        balance=False,
+        full_only=False,
+        segments_only=False,
+        overwrite=False,
+        reset=False,
+        revalidate=False,
+        fail_fast=False,
+        max_failures=20,
+        no_tts=True,
+        tts_only=False,
+        data_dir=str(tmp_path),
+        on_progress=None,
+        result_tag="cloud",
+    )
+    assert plan is not None
+    storage.atomic_write_json(
+        str(tmp_path / translate.STATE_FILENAME),
+        models.BatchState(
+            signature=runner.plan_signature(plan),
+            completed=[],
+            started_at="2026-01-01T00:00:00",
+        ),
+    )
+    base = dict(stories="vision", mode="fixed", chain="asia", no_tts=True, data_dir=str(tmp_path))
+    assert translate.run(["10000021"], **base) == ExitCode.SIGNATURE
+    assert translate.run(["10000021"], result_tag="cloud", reset=True, **base) == ExitCode.OK
+
+
+def test_reconcile_rebuilds_state_from_disk(tmp_path):
+    _setup_workspace(tmp_path)
+    rdir = tmp_path / "data" / "story" / "character" / "10000021" / "result" / "vision"
+    rdir.mkdir(parents=True)
+    for key in ("title", "full", "seg_01"):
+        (rdir / f"{key}.json").write_text(
+            json.dumps({"mode": "fixed", "chain": "asia", "final": "x"}), encoding="utf-8"
+        )
+    # 异构链路的结果不计入完成记录
+    (rdir / "seg_02.json").write_text(json.dumps({"mode": "rwkv20", "chain": "rwkv20"}), encoding="utf-8")
+    (rdir / "segments.json").write_text("{}", encoding="utf-8")
+
+    plan, _ = runner.build_plan(
+        char_ids=["10000021"],
+        all_characters=False,
+        stories="vision",
+        mode="fixed",
+        chain="asia",
+        languages="",
+        steps=20,
+        provider=None,
+        workers=1,
+        min_interval=0.0,
+        balance=False,
+        full_only=False,
+        segments_only=False,
+        overwrite=False,
+        reset=False,
+        revalidate=False,
+        fail_fast=False,
+        max_failures=20,
+        no_tts=True,
+        tts_only=False,
+        data_dir=str(tmp_path),
+        on_progress=None,
+    )
+    assert plan is not None
+    state = models.BatchState(
+        signature=runner.plan_signature(plan),
+        completed=["10000021|vision|stale", "10000021|vision|seg_01"],
+        started_at="2026-01-01T00:00:00",
+    )
+    storage.atomic_write_json(str(tmp_path / translate.STATE_FILENAME), state)
+
+    batch, code = runner._Batch.create(plan, [])
+    assert code is None and batch is not None
+    batch.reconcile()
+    raw = storage.load_json_with_backup(str(tmp_path / translate.STATE_FILENAME))
+    assert set(raw["completed"]) == {
+        "10000021|vision|title",
+        "10000021|vision|full",
+        "10000021|vision|seg_01",
+    }
+
+
+def test_reconcile_without_any_results_does_not_write_state(tmp_path):
+    _setup_workspace(tmp_path)
+    plan, _ = runner.build_plan(
+        char_ids=["10000021"],
+        all_characters=False,
+        stories="vision",
+        mode="fixed",
+        chain="asia",
+        languages="",
+        steps=20,
+        provider=None,
+        workers=1,
+        min_interval=0.0,
+        balance=False,
+        full_only=False,
+        segments_only=False,
+        overwrite=False,
+        reset=False,
+        revalidate=False,
+        fail_fast=False,
+        max_failures=20,
+        no_tts=True,
+        tts_only=False,
+        data_dir=str(tmp_path),
+        on_progress=None,
+    )
+    assert plan is not None
+    batch, code = runner._Batch.create(plan, [])
+    assert code is None and batch is not None
+    batch.reconcile()
+    assert not (tmp_path / translate.STATE_FILENAME).exists()

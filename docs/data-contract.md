@@ -1,6 +1,6 @@
 # 数据契约
 
-`data/` 由 `story-tr fetch` 生成，**不入库**（见 `.gitignore`）。以下为 **v2.0 数据契约**，全部结构经 pydantic v2 校验后写入。
+`data/` 由 `story-tr fetch` 生成，**不入库**（见 `.gitignore`）。以下为 **v2.x 数据契约**（2.1.0 起新增可选 `result-<tag>/` 与失败登记文件，均向后兼容），全部结构经 pydantic v2 校验后写入。
 
 ## 目录结构
 
@@ -18,15 +18,16 @@
 │ │ └── story/{story}/
 │ │ ├── en.md # frontmatter + 段落
 │ │ └── zh.md
-│ └── result/{story}/
+│ └── result/{story}/ # --result-tag <tag> 时并列写入 result-<tag>/{story}/
 │ ├── title.json / title.mp3 # 标题译文（TranslationResult）
 │ ├── full.json / full.mp3 # 全文译文（TranslationResult）
 │ ├── seg_01.json / seg_01.mp3 # 各段译文（TranslationResult）
 │ ├── … # seg_NN 依次编号
 │ └── segments.json # 汇总（标题/全文/各段 索引）
-├── out/ # story-tr chain 结果（{时间戳}.json / .mp3）
-├── logs/ # 运行日志 + failures_*.json + rwkv_eval_*
+├── out/ # chain 结果（{时间戳}.json / .mp3）；export 默认 out/export/
+├── logs/ # 运行日志 + failures_*/tts_failures_*/rwkv_eval_*
 ├── .translate_stories_state.json # 批量续跑状态（BatchState）
+├── .translate_failures_state.json # 未解决失败登记（FailureRegistry）
 └── .translate_state.json # 单文本链路续跑状态（ChainState）
 ```
 
@@ -110,12 +111,12 @@ title: "角色详细"
 
 ## 状态文件
 
-- `.translate_stories_state.json`（`BatchState`）：`signature`（参数签名，防混跑）+ `completed`（已完成任务键 `id|story|key`）+ 起止时间。
+- `.translate_stories_state.json`（`BatchState`）：`signature`（参数签名，含 `result_tag`，防混跑）+ `completed`（已完成任务键 `id|story|key`）+ 起止时间；可用 `translate --reconcile` 按磁盘结果重建。
 - `.translate_state.json`（`ChainState`）：单文本链路的签名、源文、语言、当前文本与已完成步骤。
-
-两者均为原子写（临时文件 + 上一版 `.bak` 备份 + 损坏隔离恢复）。
+- `.translate_failures_state.json`（`FailureRegistry`）：本次运行未解决的失败登记，含 `signature` / `result_tag` / `rounds` 与 `failures[]`（`char_id/story/key/stage=translate|tts/error/attempts/first_at/last_at`）。仅在单次运行内自动重试；下次运行开始时旧登记归档为 `.bak`，供排查但不继承。
+- 以上均为原子写（临时文件 + 上一版 `.bak` 备份 + 损坏隔离恢复）。
 
 ## 日志与输出
 
-- `logs/`：运行日志、`failures_<时间戳>.json`（翻译失败清单）、`tts_failures_<时间戳>.json`（语音失败清单）、`rwkv_eval_<时间戳>.json|md`（`story-tr eval` 报告）。
-- `out/`：`story-tr chain` 的结果（`{时间戳}.json` + 可选 `.mp3`）。
+- `logs/`：运行日志、`failures_<时间戳>_r<轮>.json`（翻译失败清单）、`tts_failures_<时间戳>_r<轮>.json`（语音失败清单）、`rwkv_eval_<时间戳>.json|md`（`story-tr eval` 报告）。
+- `out/`：`story-tr chain` 的结果（`{时间戳}.json` + 可选 `.mp3`）；`story-tr export` 默认输出 `out/export/dataset.jsonl|parquet` + `manifest.json`。

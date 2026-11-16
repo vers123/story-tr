@@ -18,6 +18,9 @@ GOOGLE_UA = (
 
 # 单次请求的文本上限：Google 免费 GET 端点约 1800 字（中文 URL 编码后约 9 字节/字）即 400，故留余量
 MAX_CHARS_PER_REQUEST = 1500
+# 批量请求：实测总字符 1800 仍可用、1850 起 400（URL 约 16 KB），按 1500 保守打包
+BATCH_MAX_CHARS = 1500
+BATCH_MAX_ITEMS = 32
 
 
 class GoogleTranslator(BaseTranslator):
@@ -25,6 +28,9 @@ class GoogleTranslator(BaseTranslator):
 
     name = "google"
     min_interval = 0.0
+    supports_batch = True
+    max_batch_chars = BATCH_MAX_CHARS
+    max_batch_items = BATCH_MAX_ITEMS
 
     def __init__(self, settings: Settings) -> None:
         super().__init__(settings)
@@ -39,6 +45,17 @@ class GoogleTranslator(BaseTranslator):
             return self._api_translate(text, src, tgt)
         self._throttle()
         return self._dict_translate(text, src, tgt)
+
+    def translate_batch(self, texts: list[str], src: str, tgt: str) -> list[str]:
+        """批量翻译一组短文本（调用方保证单条 ≤ 1500 字符）。"""
+        if not texts:
+            return []
+        if len(texts) == 1:
+            return [self.translate(texts[0], src, tgt)]
+        if self.settings.google_api_key:
+            return self._api_translate_batch(texts, src, tgt)
+        self._throttle()
+        return self._dict_translate_batch(texts, src, tgt)
 
     def _dict_translate(self, text: str, src: str, tgt: str) -> str:
         """clients5 dict-chrome-ex 免 key 端点（单条）。"""
@@ -92,3 +109,28 @@ class GoogleTranslator(BaseTranslator):
         if not out:
             raise BadOutput("google(api) 返回空结果")
         return out
+
+    def _api_translate_batch(self, texts: list[str], src: str, tgt: str) -> list[str]:
+        """Google Cloud Translation v2 批量：官方接口的 `q` 支持数组。"""
+        payload: dict[str, object] = {"q": list(texts), "target": tgt, "format": "text"}
+        if src:
+            payload["source"] = src
+        resp = self._post(
+            GOOGLE_API_URL, params={"key": self.settings.google_api_key}, json=payload, timeout=60.0
+        )
+        if resp.status_code in (401, 403):
+            raise BadOutput("google(api) 认证失败（检查 GOOGLE_API_KEY）")
+        data = self._read_json(resp)
+        try:
+            rows = data["data"]["translations"]
+        except (KeyError, TypeError):
+            raise BadOutput(f"google(api) 批量返回结构异常：{resp.text[:120]}") from None
+        if not isinstance(rows, list) or len(rows) != len(texts):
+            raise BadOutput(f"google(api) 批量返回数量不符（期望 {len(texts)} 条）")
+        outs: list[str] = []
+        for row in rows:
+            text = unescape((row.get("translatedText") if isinstance(row, dict) else "") or "").strip()
+            if not text:
+                raise BadOutput("google(api) 批量返回空结果")
+            outs.append(text)
+        return outs

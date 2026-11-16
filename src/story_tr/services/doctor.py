@@ -35,10 +35,13 @@ def _rwkv_config_row(settings: Any) -> tuple[str, str, str]:
         model_detail = "模型文件存在"
     else:
         model_detail = f"模型文件不存在: {model_path}"
+    ok = template_ok and (not model_path or os.path.exists(model_path))
     detail = "{}（{}；{}）".format(
         settings.rwkv_api_url, "模板已配置" if template_ok else "模板为空", model_detail
     )
-    ok = template_ok and (not model_path or os.path.exists(model_path))
+    if not ok:
+        detail += "；请把 translate-20times-3B.pth 放入 RWKV-Runner 的 models/ 并在 Runner 中加载，"
+        detail += "再用 doctor --probe 确认 Working"
     return (OK if ok else WARN, "本地 RWKV", detail)
 
 
@@ -51,7 +54,11 @@ def _rwkv_probe_row(settings: Any) -> tuple[str, str, str]:
         return (WARN, "本地 RWKV 服务", "不可达：%s" % (info.get("error") or "未知错误"))
     status = info.get("status")
     if status != "Working":
-        return (WARN, "本地 RWKV 服务", "可达，状态 %s（模型未加载？）" % (status or "未知"))
+        return (
+            WARN,
+            "本地 RWKV 服务",
+            "可达，状态 %s（模型未加载？请在 Runner 中加载模型）" % (status or "未知"),
+        )
     return (OK, "本地 RWKV 服务", "Working，模型 %s" % (info.get("model") or "未知"))
 
 

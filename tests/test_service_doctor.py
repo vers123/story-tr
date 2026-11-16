@@ -32,6 +32,7 @@ def test_doctor_rwkv_config_row(tmp_path):
     )
     status_, name, detail = doctor_mod._rwkv_config_row(settings)
     assert status_ == "WARN"  # 配置了不存在的模型路径
+    assert "RWKV-Runner" in detail  # 给出加载指引
 
     model = tmp_path / "m.pth"
     model.write_text("x", encoding="utf-8")

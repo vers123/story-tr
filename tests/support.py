@@ -40,6 +40,44 @@ class FakeTranslator:
         return self.result
 
 
+class ProbeTranslator(FakeTranslator):
+    """带 `probe()` 的本地后端替身（用于 rwkv 预检用例）。"""
+
+    def __init__(self, name="google", result="译文", error=None, available=(True, ""), probe=None):
+        super().__init__(name=name, result=result, error=error, available=available)
+        self.probe_result = dict(
+            probe or {"reachable": True, "status": "Working", "model": "m", "error": None}
+        )
+
+    def probe(self):
+        return dict(self.probe_result)
+
+
+class FakeBatchTranslator(FakeTranslator):
+    """支持批量的翻译替身：批量结果由逐条结果拼接，便于对比等价性。"""
+
+    supports_batch = True
+    max_batch_chars = 1500
+    max_batch_items = 32
+
+    def __init__(self, name="google", result="译文", error=None, batch_error=None, available=(True, "")):
+        super().__init__(name=name, result=result, error=error, available=available)
+        self.batch_error = batch_error
+        self.batch_calls = 0
+
+    def translate(self, text, src, tgt):
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return f"<{tgt}>{text}"
+
+    def translate_batch(self, texts, src, tgt):
+        self.batch_calls += 1
+        if self.batch_error is not None:
+            raise self.batch_error
+        return [f"<{tgt}>{text}" for text in texts]
+
+
 class FakeRwkv:
     """`eval` / `status` 用的本地 RWKV 替身。"""
 

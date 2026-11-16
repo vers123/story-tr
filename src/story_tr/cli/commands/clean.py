@@ -13,8 +13,9 @@ def clean_cmd(
     dry_run: bool = typer.Option(False, "--dry-run", help="只预览，不删除"),
     yes: bool = typer.Option(False, "-y", "--yes", help="跳过交互确认"),
     keep_state: bool = typer.Option(False, "--keep-state", help="保留状态记录"),
+    result_tag: str | None = typer.Option(None, "--result-tag", help="清理指定结果标签目录"),
 ) -> None:
-    """清理 result/ 下的翻译产物（保留 result/ 目录本身）。"""
+    """清理 result[-tag]/ 下的翻译产物（保留目录本身）。"""
     rc = clean_svc.run(
         char_ids=list(char_ids or []),
         all_characters=all_characters,
@@ -23,5 +24,6 @@ def clean_cmd(
         yes=yes,
         keep_state=keep_state,
         data_dir=ctx.obj["data_dir"],
+        result_tag=result_tag,
     )
     raise typer.Exit(int(rc))

@@ -44,8 +44,8 @@ def _parse_templates(spec: str) -> list[str]:
     return [part for part in spec.split("||") if part.strip()]
 
 
-def _read_baseline(home_: str, cid: str, story: str, key: str) -> str | None:
-    path = os.path.join(storage.result_dir(home_, cid), story, key + ".json")
+def _read_baseline(home_: str, cid: str, story: str, key: str, result_tag: str | None = None) -> str | None:
+    path = os.path.join(storage.result_dir(home_, cid, result_tag), story, key + ".json")
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -55,7 +55,9 @@ def _read_baseline(home_: str, cid: str, story: str, key: str) -> str | None:
     return final if isinstance(final, str) else None
 
 
-def _sample(home_: str, char_ids: list[str], stories: str, limit: int) -> list[dict[str, Any]]:
+def _sample(
+    home_: str, char_ids: list[str], stories: str, limit: int, result_tag: str | None = None
+) -> list[dict[str, Any]]:
     limit = max(0, int(limit))
     if limit <= 0:
         return []
@@ -76,7 +78,7 @@ def _sample(home_: str, char_ids: list[str], stories: str, limit: int) -> list[d
                         "story": story,
                         "key": key,
                         "text": para,
-                        "baseline": _read_baseline(home_, cid, story, key),
+                        "baseline": _read_baseline(home_, cid, story, key, result_tag),
                     }
                 )
     return items
@@ -299,17 +301,23 @@ def run(
     rwkv_url: str | None = None,
     rwkv_template: str | None = None,
     data_dir: str | None = None,
+    result_tag: str | None = None,
 ) -> ExitCode:
     """本地评测入口，返回 `ExitCode`。"""
     if int(limit) < 1:
         log.error("--limit 必须 ≥ 1。")
+        return ExitCode.USAGE
+    try:
+        result_tag = storage.validate_result_tag(result_tag)
+    except ValueError as exc:
+        log.error(str(exc))
         return ExitCode.USAGE
 
     home_ = storage.home(data_dir)
     selected = _select(home_, char_ids, all_characters)
     if selected is None:
         return ExitCode.USAGE
-    items = _sample(home_, selected, stories, limit)
+    items = _sample(home_, selected, stories, limit, result_tag)
     if not items:
         log.error("没有采样到任何段落：所选角色 / 故事的 zh.md 没有正文。")
         return ExitCode.USAGE

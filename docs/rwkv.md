@@ -36,6 +36,7 @@ story-tr eval --limit 20 --templates builtin # 校准提示词模板
 ## 行为说明
 
 - `--mode rwkv20` 自动使用本地 `rwkv` 后端（无需 `--provider`）；`--provider rwkv` 仅能与 `--mode rwkv20` 搭配。
+- 启动预检：批量翻译开始前会 `probe` 一次本地服务；不可达 → 退出码 `5`，服务可达但状态 `Offline`（模型未加载）→ 退出码 `4`。`--plan` 只输出配置，不联网探测。
 - `rwkv20` 的输入必须是英文：批量翻译直接读取故事目录下的 `en.md`（官方英文原文），`chain` 则要求传入英文文本；缺失 `en.md` 的故事会被跳过并记录日志。
 - 调用方式：RWKV-Runner 的 OpenAI 兼容接口（`POST /v1/completions`、`GET /status`、`GET /v1/models`）。
 - `translate-20times-3B` 必须使用上面的 `English/Chinese` 指令模板；RWKV-Runner 上下文建议 ≥2048，避免长段落被截断。

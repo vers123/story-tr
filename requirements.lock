@@ -8,7 +8,6 @@ httpx==0.28.1
 pydantic==2.14.3
 pydantic-settings==2.16.2
 rich==15.0.0
-tenacity==9.2.1
 langdetect==1.0.9
 
 # 开发/测试

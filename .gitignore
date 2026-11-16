@@ -38,6 +38,7 @@ logs/
 out/
 .translate_state.json*
 .translate_stories_state.json*
+.translate_failures_state.json*
 
 # 抓取数据
 data/

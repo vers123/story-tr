@@ -14,6 +14,7 @@ from story_tr.services import chain as chain_svc
 from story_tr.services import clean as clean_svc
 from story_tr.services import doctor as doctor_svc
 from story_tr.services import eval as eval_svc
+from story_tr.services import export as export_svc
 from story_tr.services import fetch as fetch_svc
 from story_tr.services import folders as folders_svc
 from story_tr.services import status as status_svc
@@ -21,7 +22,7 @@ from story_tr.services import translate as translate_svc
 
 runner = CliRunner()
 
-SUBCOMMANDS = ("fetch", "folders", "translate", "chain", "clean", "status", "doctor", "eval")
+SUBCOMMANDS = ("fetch", "folders", "translate", "chain", "clean", "status", "doctor", "eval", "export")
 
 
 def test_help_lists_subcommands():
@@ -186,6 +187,24 @@ def test_eval_command(monkeypatch):
     assert calls["limit"] == 5
 
 
+def test_export_command(monkeypatch):
+    calls = {}
+
+    def fake_run(**kwargs):
+        calls.update(kwargs)
+        return ExitCode.OK
+
+    monkeypatch.setattr(export_svc, "run", fake_run)
+    result = runner.invoke(
+        app, ["export", "10000021", "--stories", "vision", "--format", "jsonl", "--with-steps"]
+    )
+    assert result.exit_code == 0
+    assert calls["char_ids"] == ["10000021"]
+    assert calls["stories"] == "vision"
+    assert calls["fmt"] == "jsonl"
+    assert calls["with_steps"] is True
+
+
 def test_command_exit_code_propagated(monkeypatch):
     monkeypatch.setattr(status_svc, "run", lambda **kwargs: ExitCode.CONNECTION)
     result = runner.invoke(app, ["status"])
@@ -289,3 +308,62 @@ def test_translate_command_tts_only_conflicts_with_no_tts(monkeypatch):
     result = runner.invoke(app, ["translate", "10000021", "--tts-only", "--no-tts"])
     assert result.exit_code != 0
     assert "互斥" in result.output
+
+
+def test_result_tag_option_forwarded(monkeypatch):
+    calls = {}
+
+    def fake(**kwargs):
+        calls.update(kwargs)
+        return ExitCode.OK
+
+    for svc, argv in (
+        (translate_svc, ["translate", "1", "--result-tag", "cloud"]),
+        (clean_svc, ["clean", "1", "--result-tag", "cloud"]),
+        (eval_svc, ["eval", "--result-tag", "cloud"]),
+        (status_svc, ["status", "--result-tag", "cloud"]),
+    ):
+        calls.clear()
+        monkeypatch.setattr(svc, "run", fake)
+        assert runner.invoke(app, argv).exit_code == 0
+        assert calls["result_tag"] == "cloud"
+
+
+def test_translate_batch_option_forwarded(monkeypatch):
+    calls = {}
+
+    def fake(**kwargs):
+        calls.update(kwargs)
+        return ExitCode.OK
+
+    monkeypatch.setattr(translate_svc, "run", fake)
+    assert runner.invoke(app, ["translate", "1"]).exit_code == 0
+    assert calls["batch"] is True
+    assert runner.invoke(app, ["translate", "1", "--no-batch"]).exit_code == 0
+    assert calls["batch"] is False
+
+
+def test_translate_plan_and_reconcile_forwarded(monkeypatch):
+    calls = {}
+
+    def fake(**kwargs):
+        calls.update(kwargs)
+        return ExitCode.OK
+
+    monkeypatch.setattr(translate_svc, "run", fake)
+    assert runner.invoke(app, ["translate", "1", "--plan"]).exit_code == 0
+    assert calls["plan_only"] is True
+    assert runner.invoke(app, ["translate", "1", "--reconcile"]).exit_code == 0
+    assert calls["reconcile"] is True
+
+
+def test_translate_retry_rounds_forwarded(monkeypatch):
+    calls = {}
+
+    def fake(**kwargs):
+        calls.update(kwargs)
+        return ExitCode.OK
+
+    monkeypatch.setattr(translate_svc, "run", fake)
+    assert runner.invoke(app, ["translate", "1", "--retry-rounds", "2"]).exit_code == 0
+    assert calls["retry_rounds"] == 2

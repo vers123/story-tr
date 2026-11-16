@@ -30,6 +30,7 @@ pytest -q --cov=story_tr --cov-report=term-missing
 
 - 覆盖率门槛写在 `pyproject.toml`（`fail_under = 85`）。
 - 结构守护测试（单函数 ≤ 60 行 / 分层单向依赖 / 禁止跨模块引用 `_` 私有名字）由 `tests/test_structure.py` 提供，详见 [architecture.md](architecture.md#结构守护)。
+- CI 在 Ubuntu 上跑 quality + 测试矩阵（3.10–3.14）+ 构建，另有 **Windows 单版本（3.13）** 回归 job，覆盖路径分隔符与原子写相关行为。
 - 上面四步也可用仓库自带脚本一键执行：`scripts/verify.ps1`（Windows）/ `scripts/verify.sh`（macOS/Linux）；某一步失败不会中断后续步骤，最后统一汇总并以非零退出码结束。
 
 ## 版本与变更
@@ -67,7 +68,7 @@ pytest -q --cov=story_tr --cov-report=term-missing
 2. **更新 `CHANGELOG.md`**：遵循 Keep a Changelog 1.1.0 —— 日常累积在 `## [Unreleased]`，发布时改为 `## [X.Y.Z] - YYYY-MM-DD`；条目按 `### Added` / `### Changed` / `### Removed` / `### Fixed` / `### Performance` / `### Refactor` / `### Testing` / `### Build & CI` 分组，并在文件底部补 `compare` 链接。
 3. **本地校验**：`ruff check .`、`ruff format --check .`、`mypy src/story_tr`、`pytest -q --cov=story_tr`（等价于 CI 的 quality + test job）；也可直接运行仓库自带的 `scripts/verify.ps1` / `scripts/verify.sh`。
 4. **提交前钩子**：`pip install pre-commit` 后执行 `pre-commit install`，把校验挂到 `git commit` 前（钩子配置见 `.pre-commit-config.yaml`）。
-5. **打标签并推送**：`git tag -a vX.Y.Z -m "vX.Y.Z"` → `git push origin vX.Y.Z`（标签必须以 `v` 开头，例如 `v2.0.0`）。
+5. **打标签并推送**：`git tag -a vX.Y.Z -m "vX.Y.Z"` → `git push origin vX.Y.Z`（标签必须以 `v` 开头，例如 `v2.1.0`）。
 6. **tag 触发发布工作流**：`.github/workflows/release.yml` 监听 `v*` 标签，执行 `python -m build` + `twine check`，再以 `gh release create` 创建 GitHub Release 并附上 `dist/*`。
 7. **手工构建（可选）**：`python -m build` 产出 `dist/`，`twine check dist/*` 校验后再上传。
 

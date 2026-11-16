@@ -68,3 +68,23 @@ def test_resolve_providers():
     assert storage.resolve_providers("google", "rwkv20")[1] is not None
     assert storage.resolve_providers("rwkv", "fixed")[1] is not None
     assert storage.resolve_providers("yandex", "fixed")[1] is not None
+
+
+def test_result_tag_paths(tmp_path):
+    home = str(tmp_path)
+    legacy = storage.result_dir(home, "10000021")
+    tagged = storage.result_dir(home, "10000021", "cloud")
+    assert legacy.endswith("10000021\\result") or legacy.endswith("10000021/result")
+    assert tagged.endswith("10000021\\result-cloud") or tagged.endswith("10000021/result-cloud")
+
+
+def test_validate_result_tag():
+    assert storage.validate_result_tag(None) is None
+    assert storage.validate_result_tag("") is None
+    assert storage.validate_result_tag(" cloud_v1.2-rc ") == "cloud_v1.2-rc"
+    for bad in ("../x", "a/b", "-lead", "x" * 33, "结果"):
+        try:
+            storage.validate_result_tag(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"应拒绝非法标签：{bad!r}")

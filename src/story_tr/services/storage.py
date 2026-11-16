@@ -10,6 +10,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import shutil
 import time
 from datetime import datetime
@@ -41,8 +42,25 @@ def profile_story_dir(home_: str, cid: str) -> str:
     return os.path.join(story_root(home_), cid, "profile", "story")
 
 
-def result_dir(home_: str, cid: str) -> str:
-    return os.path.join(story_root(home_), cid, "result")
+def result_dir(home_: str, cid: str, tag: str | None = None) -> str:
+    """结果目录：默认 `result/`；传 tag 时为并列的 `result-<tag>/`。"""
+    name = "result" if not tag else "result-" + tag
+    return os.path.join(story_root(home_), cid, name)
+
+
+_RESULT_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
+
+
+def validate_result_tag(tag: str | None) -> str | None:
+    """校验并归一化结果标签；空值返回 `None`，非法抛 `ValueError`。"""
+    if tag is None:
+        return None
+    value = tag.strip()
+    if not value:
+        return None
+    if not _RESULT_TAG_RE.match(value):
+        raise ValueError(f"非法结果标签：{tag!r}（允许字母 / 数字 / . _ -，长度 ≤32，且以字母或数字开头）")
+    return value
 
 
 def logs_dir(home_: str) -> str:

@@ -214,3 +214,93 @@ def test_status_run_manifest_plain(tmp_path, capsys):
     _setup_workspace(tmp_path)
     assert status_mod.run(manifest=True, data_dir=str(tmp_path)) == ExitCode.OK
     assert "清单已写入" in capsys.readouterr().out
+
+
+def test_status_render_providers_and_rwkv():
+    """签名里的 providers 列表要正确显示；含 rwkv 子签名时给出标记。"""
+    info = status_info(
+        state={
+            "completed": 2,
+            "updated_at": "t",
+            "signature": {
+                "mode": "fixed",
+                "chain": "asia",
+                "steps": None,
+                "providers": ["google", "bing"],
+                "rwkv": {"url": "u"},
+            },
+        }
+    )
+    text = status_mod.render(info)
+    assert "providers=google,bing" in text
+    assert "rwkv=on" in text
+    assert "provider=None" not in text
+
+
+def test_status_tagged_scan(tmp_path):
+    _setup_workspace(tmp_path)
+    tagged = tmp_path / "data" / "story" / "character" / "10000021" / "result-cloud" / "vision"
+    tagged.mkdir(parents=True)
+    (tagged / "seg_01.json").write_text(json.dumps({"source": "x"}), encoding="utf-8")
+    (tagged / "title.json").write_text("{}", encoding="utf-8")
+    info = status_mod.collect(str(tmp_path), result_tag="cloud")
+    assert info["result_tag"] == "cloud"
+    assert info["segments"] == 1
+    assert info["titles"] == 1
+    assert "result-cloud" in info["result_tags"]
+    text = status_mod.render(info)
+    assert "结果目录：result-cloud" in text
+
+
+def test_status_disk_tasks_and_mismatch_hint(tmp_path):
+    _setup_workspace(tmp_path)
+    rdir = tmp_path / "data" / "story" / "character" / "10000021" / "result" / "vision"
+    rdir.mkdir(parents=True)
+    for name in ("title.json", "full.json", "seg_01.json"):
+        (rdir / name).write_text("{}", encoding="utf-8")
+    (tmp_path / status_mod.STATE_FILENAME).write_text(
+        json.dumps({"completed": ["a"], "updated_at": "t", "signature": {"mode": "fixed"}}),
+        encoding="utf-8",
+    )
+    info = status_mod.collect(str(tmp_path))
+    assert info["disk_tasks"] == 3
+    text = status_mod.render(info)
+    assert "1 条记录 / 磁盘 3 份结果" in text
+    assert "--reconcile" in text
+
+
+def test_status_pending_failures(tmp_path):
+    from story_tr import models
+    from story_tr.services.translate import failures as failures_mod
+
+    _setup_workspace(tmp_path)
+    registry = models.FailureRegistry(
+        signature={"mode": "fixed"},
+        started_at="2026-01-01T00:00:00",
+        failures=[
+            models.FailureRecord(
+                char_id="10000021",
+                story="vision",
+                key="seg_01",
+                stage="translate",
+                error="BadOutput: x",
+                first_at="t",
+                last_at="t",
+            ),
+            models.FailureRecord(
+                char_id="10000021",
+                story="vision",
+                key="seg_02",
+                stage="tts",
+                error="ConnectionFailed: y",
+                first_at="t",
+                last_at="t",
+            ),
+        ],
+    )
+    failures_mod.save_registry(str(tmp_path), registry)
+    info = status_mod.collect(str(tmp_path))
+    assert info["pending_failures"]["count"] == 2
+    assert info["pending_failures"]["translate"] == 1
+    assert info["pending_failures"]["tts"] == 1
+    assert "失败登记：2 条未解决" in status_mod.render(info)
